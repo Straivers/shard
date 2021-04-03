@@ -28,6 +28,10 @@ nothrow public:
         return _array.length;
     }
 
+    void clear() {
+        _length = 0;
+    }
+
     void trim() {
         trim((size_t s, ref T t) {
             static if (hasElaborateDestructor!T)
