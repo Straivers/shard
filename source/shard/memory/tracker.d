@@ -7,6 +7,7 @@ struct MemoryStats {
     size_t bytes_allocated;
     size_t most_bytes_allocated;
 
+    size_t total_allocations;
     size_t num_allocations;
     size_t num_failed_allocations;
 }
@@ -49,6 +50,7 @@ struct MemoryTracker(Allocator) {
         if (auto p = _allocator.allocate(size)) {
             _stats.bytes_allocated += size;
             _stats.num_allocations++;
+            _stats.total_allocations++;
 
             if (_stats.bytes_allocated > _stats.most_bytes_allocated)
                 _stats.most_bytes_allocated = _stats.bytes_allocated;

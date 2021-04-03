@@ -5,7 +5,7 @@ version (Windows):
 import shard.os.time;
 import core.sys.windows.windows;
 
-final class Win32Clock : OsClock {
+final class Win32Clock : OsClockApi {
     this() {
         long hz;
         if (!QueryPerformanceFrequency(&hz))

@@ -38,14 +38,16 @@ public nothrow:
     @disable this(this);
 
     ~this() {
-        if (_base_allocator) {
-            auto mem = _memory_start[0 .. _memory_end - _memory_start];
-            _base_allocator.deallocate(mem);
-        }
+        if (_base_allocator)
+            _base_allocator.deallocate(managed_memory);
     }
 
     size_t alignment() const {
         return default_alignment;
+    }
+
+    void[] managed_memory() {
+        return _memory_start[0 .. _memory_end - _memory_start];
     }
 
     Ternary owns(void[] memory) const {

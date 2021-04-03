@@ -1,7 +1,7 @@
 module shard.array;
 
 import shard.memory : Allocator;
-import std.algorithm : max, move;
+import std.algorithm : move;
 import std.traits : hasElaborateDestructor;
 
 struct Array(T) {
@@ -30,6 +30,11 @@ nothrow public:
 
     void clear() {
         _length = 0;
+    }
+
+    void reserve(size_t min_size) {
+        if (_array.length < min_size)
+            _allocator.resize_array(_array, min_size);
     }
 
     void trim() {

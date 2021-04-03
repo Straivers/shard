@@ -136,7 +136,7 @@ struct TimeStamp {
     }
 }
 
-interface OsClock {
+interface OsClockApi {
     Time get_time() @trusted @nogc nothrow;
 
     TimeStamp get_timestamp() @trusted @nogc nothrow;

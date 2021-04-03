@@ -8,7 +8,7 @@
  */
 module shard.logger;
 
-import shard.os.time : TimeStamp, OsClock;
+import shard.os.time : TimeStamp, OsClockApi;
 
 /**
  Enumeration of logger levels of detail.
@@ -105,7 +105,7 @@ struct Logger {
 @safe nothrow public:
 
     /// Initialize this logger with a minimum level of detail.
-    @nogc this(LogLevel level, OsClock clock) {
+    @nogc this(LogLevel level, OsClockApi clock) {
         _level = level;
         _clock = clock;
     }
@@ -234,7 +234,7 @@ private:
 
     LogLevel _level;
     Logger* _parent;
-    OsClock _clock;
+    OsClockApi _clock;
     LogEventSink[max_event_sinks] _event_sinks;
 }
 
