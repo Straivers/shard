@@ -1,0 +1,5 @@
+name "shard"
+description "Utilities"
+authors "David Zhang"
+copyright "Copyright © 2021, David Zhang"
+license "MIT"

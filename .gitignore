@@ -1,0 +1,15 @@
+.dub
+docs.json
+__dummy.html
+docs/
+/shard
+shard.so
+shard.dylib
+shard.dll
+shard.a
+shard.lib
+shard-test-*
+*.exe
+*.o
+*.obj
+*.lst
