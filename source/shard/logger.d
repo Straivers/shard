@@ -8,6 +8,7 @@
  */
 module shard.logger;
 
+import core.stdc.stdlib : exit;
 import shard.os.time : TimeStamp, OsClockApi;
 
 /**
@@ -225,11 +226,17 @@ struct Logger {
 
 private:
     void log_event(in LogEvent event) {
-        for (int i = 0; _event_sinks[i]; i++)
+        const is_fatal = event.level == LogLevel.Fatal;
+        for (auto i = 0; _event_sinks[i]; i++) {
             _event_sinks[i].log_event(event);
+            if (is_fatal)
+                _event_sinks[i].flush();
+        }
 
         if (_parent)
             _parent.log_event(event);
+        else if (is_fatal)
+            () @trusted { exit(-1); } ();
     }
 
     LogLevel _level;
