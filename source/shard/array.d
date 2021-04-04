@@ -61,6 +61,14 @@ nothrow public:
         _length++;
     }
 
+    void push_back()(T[] values...) {
+        while (_length + values.length > _array.length)
+            _grow();
+        
+        _array[_length .. _length + values] = values;
+        _length += values.length;
+    }
+
     T pop_back() {
         assert(_length > 0);
 
