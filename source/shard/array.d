@@ -53,20 +53,24 @@ nothrow public:
         );
     }
 
-    void push_back()(auto ref T value) {
+    size_t push_back()(auto ref T value) {
         if (_length == _array.length)
             _grow();
 
+        const index = _length;
         _array[_length] = move(value);
         _length++;
+        return index;
     }
 
-    void push_back()(T[] values...) {
+    size_t push_back()(T[] values...) {
         while (_length + values.length > _array.length)
             _grow();
         
+        const first = _length;
         _array[_length .. _length + values] = values;
         _length += values.length;
+        return first;
     }
 
     T pop_back() {
