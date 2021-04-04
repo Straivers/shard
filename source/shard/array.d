@@ -68,7 +68,7 @@ nothrow public:
             _grow();
         
         const first = _length;
-        _array[_length .. _length + values] = values;
+        _array[_length .. _length + values.length] = values;
         _length += values.length;
         return first;
     }
