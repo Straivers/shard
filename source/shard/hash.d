@@ -2,15 +2,24 @@ module shard.hash;
 
 nothrow:
 
-alias Hash = Hash64;
-
 align (8) struct Hash64 {
     ulong value;
 }
 
-Hash64 hash_of(const(char)[] str) {
+Hash64 hash64_of(const(char)[] str) {
     import std.digest.murmurhash: digest, MurmurHash3;
 
     auto v = digest!(MurmurHash3!128)(str);
-    return Hash(*(cast(ulong*) v.ptr));
+    return Hash64(*(cast(ulong*) v.ptr));
+}
+
+align (4) struct Hash32 {
+    uint value;
+}
+
+Hash32 hash32_of(const(char)[] str) {
+    import std.digest.murmurhash: digest, MurmurHash3;
+
+    auto v = digest!(MurmurHash3!32)(str);
+    return Hash32(*(cast(uint*) v.ptr));
 }

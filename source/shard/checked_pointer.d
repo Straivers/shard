@@ -1,7 +1,7 @@
 module shard.checked_pointer;
 
 struct CheckedVoidPtr {
-    import shard.hash: Hash64, hash_of;
+    import shard.hash: Hash64;
     import shard.memory.traits : PtrType, to_ptr_type;
     import std.traits : fullyQualifiedName;
 
