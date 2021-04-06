@@ -107,9 +107,9 @@ private:
 }
 
 unittest {
-    import shard.memory : AllocatorApi, Arena;
+    import shard.memory : AllocatorApi, UnmanagedArena;
 
-    auto mem = new AllocatorApi!Arena(new void[](int.sizeof * 512));
+    auto mem = new AllocatorApi!UnmanagedArena(new void[](int.sizeof * 512));
     auto arr = Array!int(mem);
 
     foreach (i; 0 .. 512)
@@ -126,14 +126,14 @@ unittest {
 }
 
 unittest {
-    import shard.memory : AllocatorApi, Arena;
+    import shard.memory : AllocatorApi, UnmanagedArena;
 
     struct Foo {
         int value;
         @disable this(this);
     }
 
-    auto mem = new AllocatorApi!Arena(new void[](Foo.sizeof * 512));
+    auto mem = new AllocatorApi!UnmanagedArena(new void[](Foo.sizeof * 512));
     auto arr = Array!Foo(mem);
 
     foreach (i; 0 .. 512) {

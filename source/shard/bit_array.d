@@ -1,5 +1,8 @@
 module shard.bit_array;
 
+import shard.memory : Allocator;
+import core.stdc.string : memset;
+
 struct BitArray {
     ubyte[] array;
 
@@ -48,4 +51,65 @@ unittest {
         ~array[i];
 
     assert(array.array[0] == 127);
+}
+
+struct UnmanagedBitArray {
+    this(size_t n_bits, Allocator allocator) {
+        _storage = allocator.make_array!ubyte(size_for(n_bits));
+    }
+
+    void resize(size_t n_bits, Allocator allocator) {
+        allocator.resize_array(_storage, size_for(n_bits));
+    }
+
+    void clear() {
+        memset(_storage.ptr, 0, _storage.length);
+    }
+
+    void free(Allocator allocator) {
+        allocator.resize_array(_storage, 0);
+    }
+
+    static size_t size_for(size_t n_bits) {
+        const div = n_bits / 8;
+        const rem = n_bits % 8;
+        return div + (rem != 0);
+    }
+
+    bool get_bit(size_t index) {
+        auto loc = coords(index);
+        return (*loc.ptr & (1 << loc.bit_id)) != 0;
+    }
+
+    bool flip_bit(size_t index) {
+        auto loc = coords(index);
+        *loc.ptr ^= (1 << loc.bit_id);
+        return (*loc.ptr & (1 << loc.bit_id)) != 0;
+    }
+
+    void set_bit(size_t index) {
+        auto loc = coords(index);
+        *loc.ptr |= (1 << loc.bit_id);
+    }
+
+    void set_bit(size_t index, bool value) {
+        auto loc = coords(index);
+        *loc.ptr ^= (-(cast(uint) value) ^ *loc.ptr) & (1 << loc.bit_id); 
+    }
+
+    void clear_bit(size_t index) {
+        auto loc = coords(index);
+        *loc.ptr &= ~(1 << loc.bit_id);
+    }
+
+private:
+    struct Coords {
+        ubyte* ptr;
+        size_t bit_id;
+    }
+
+    pragma(inline, true)
+    Coords coords(size_t i) { return Coords(&_storage[i / 8], i % 8); }
+
+    ubyte[] _storage;
 }

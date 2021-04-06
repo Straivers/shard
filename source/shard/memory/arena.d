@@ -5,6 +5,57 @@ import shard.memory.common;
 
 struct Arena {
 public nothrow:
+    this(Allocator allocator, size_t size, size_t alignment = default_alignment) {
+        _base_allocator = allocator;
+        _impl = UnmanagedArena(_base_allocator.allocate(size), alignment);
+    }
+
+    ~this() {
+        if (_base_allocator)
+            _base_allocator.deallocate(range_start[0 .. range_end - range_start]);
+    }
+
+    // dfmt off
+    size_t alignment() const { return _impl.alignment(); }
+
+    Ternary owns(void[] memory) const { return _impl.owns(memory); }
+
+    void* range_start() { return _impl.range_start(); }
+
+    void* range_end() { return _impl.range_end(); }
+
+    size_t bytes_allocated() { return _impl.bytes_allocated(); }
+
+    size_t bytes_available() { return _impl.bytes_available(); }
+    // dfmt on
+
+    size_t get_optimal_alloc_size(size_t size) const {
+        return _impl.get_optimal_alloc_size(size);
+    }
+
+    void[] allocate(size_t size) {
+        return _impl.allocate(size);
+    }
+
+    bool deallocate(ref void[] memory) {
+        return _impl.deallocate(memory);
+    }
+
+    bool resize(ref void[] memory, size_t size) {
+        return _impl.resize(memory, size);
+    }
+
+    bool reallocate(ref void[] memory, size_t new_size) {
+        return _impl.reallocate(memory, new_size);
+    }
+
+private:
+    Allocator _base_allocator;
+    UnmanagedArena _impl;
+}
+
+struct UnmanagedArena {
+    public nothrow:
     this(void[] memory, size_t alignment = default_alignment) {
         _start = align_pointer(memory.ptr, alignment);
         _alignment = alignment;
@@ -13,31 +64,31 @@ public nothrow:
         _end = _start + memory.length;
     }
 
-    this(Allocator allocator, size_t size) {
-        _base_allocator = allocator;
-        _alignment = default_alignment;
-        this(_base_allocator.allocate(size));
-    }
-
     @disable this(this);
-
-    ~this() {
-        if (_base_allocator)
-            _base_allocator.deallocate(managed_memory);
-    }
 
     size_t alignment() const {
         return _alignment;
     }
 
     Ternary owns(void[] memory) const {
-        if (memory == [] || memory.is_sub_slice_of(_start[0 .. _top - _start]))
-            return Ternary.yes;
-        return Ternary.no;
+        return Ternary(memory == [] || memory.is_sub_slice_of(_start[0 .. _top - _start]));
     }
 
-    void[] managed_memory() {
-        return _start[0 .. _end - _start];
+    void* range_start() {
+        return _start;
+    }
+
+    void* range_end() {
+        return _end;
+    }
+
+    size_t bytes_allocated() {
+        assert(_top >= _start);
+        return _top - _start;
+    }
+
+    size_t bytes_available() {
+        return _end - _top;
     }
 
     size_t get_optimal_alloc_size(size_t size) const {
@@ -112,8 +163,6 @@ public nothrow:
     }
 
 private:
-    Allocator _base_allocator;
-
     size_t _alignment;
     void* _top, _start, _end;
 }
@@ -121,7 +170,7 @@ private:
 unittest {
     import shard.memory.allocator: test_allocate_api, test_reallocate_api, test_resize_api;
 
-    auto arena = Arena(new void[](4 * 1024));
+    auto arena = UnmanagedArena(new void[](4 * 1024));
 
     test_allocate_api(arena);
     test_reallocate_api(arena);

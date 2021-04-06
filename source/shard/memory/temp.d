@@ -19,8 +19,8 @@ struct ScopedArena {
         Arena arena;
 
     nothrow:
-        this(void[] memory) {
-            arena = Arena(memory);
+        this(Allocator allocator, size_t size) {
+            arena = Arena(allocator, size);
         }
 
         ~this() {
@@ -61,29 +61,25 @@ struct ScopedArena {
 
 nothrow public:
     Allocator source;
-    typeof(scoped!Impl([])) base;
+    typeof(scoped!Impl(null, 0)) base;
     alias base this;
 
     this(Allocator source, size_t size) {
-        this.source = source;
-        base = scoped!Impl(source.allocate(size));
+        base = scoped!Impl(source, size);
     }
 
     @disable this(this);
 
     ~this() {
-        if (source) {
-            auto mem = arena.managed_memory;
-            source.deallocate(mem);
-        }
+        destroy(base);
     }
 }
 
 unittest {
     import shard.memory.allocator: AllocatorApi, test_allocate_api, test_reallocate_api, test_resize_api;
-    import shard.memory.arena: Arena;
+    import shard.memory.arena: UnmanagedArena;
 
-    auto base = new AllocatorApi!Arena(new void[](32.kib));
+    auto base = new AllocatorApi!UnmanagedArena(new void[](32.kib));
     auto temp = scoped_arena(base);
 
     test_allocate_api(temp);
