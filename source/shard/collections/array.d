@@ -37,7 +37,7 @@ nothrow public:
 
     size_t push_back()(auto ref T value) { return _impl.push_back(_allocator, value); }
 
-    size_t push_back(const(T)[] values...) { return _impl.push_back(_allocator, values); }
+    size_t push_back(T[] values...) { return _impl.push_back(_allocator, values); }
 
     T pop_back() { return _impl.pop_back(); }
 
@@ -108,12 +108,13 @@ nothrow public:
     @disable this(this);
 
     ~this() {
-        assert(_p,
+        assert(_p is null,
             "Unmanaged array was not freed before destruction. call free(Allocator) before destroying.");
     }
 
     void free(Allocator allocator) {
         allocator.dispose(_p[0 .. _capacity]);
+        _p = null;
     }
 
     size_t length() const {
@@ -149,7 +150,7 @@ nothrow public:
         return index;
     }
 
-    size_t push_back(Allocator allocator, const(T)[] values...) {
+    size_t push_back(Allocator allocator, T[] values...) {
         while (_length + values.length > _capacity)
             _grow(allocator);
 
