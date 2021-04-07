@@ -37,7 +37,7 @@ nothrow public:
 
     size_t push_back()(auto ref T value) { return _impl.push_back(_allocator, value); }
 
-    size_t push_back()(T[] values...) { return _impl.push_back(_allocator, values); }
+    size_t push_back(const(T)[] values...) { return _impl.push_back(_allocator, values); }
 
     T pop_back() { return _impl.pop_back(); }
 
@@ -138,8 +138,8 @@ nothrow public:
         while (_capacity < _length + extra)
             _grow(allocator);
     }
-                                                             
-    size_t push_back()(Allocator allocator, ref T value) {
+
+    size_t push_back()(Allocator allocator, auto ref T value) {
         if (_length == _capacity)
             _grow(allocator);
 
@@ -149,7 +149,7 @@ nothrow public:
         return index;
     }
 
-    size_t push_back()(Allocator allocator, T[] values...) {
+    size_t push_back(Allocator allocator, const(T)[] values...) {
         while (_length + values.length > _capacity)
             _grow(allocator);
 
