@@ -10,100 +10,46 @@ struct Array(T) {
 nothrow public:
     this(Allocator allocator, size_t initial_size = default_initial_size) {
         _allocator = allocator;
-        _array = _allocator.make_array!T(initial_size);
+        _impl = UnmanagedArray!T(allocator, initial_size);
     }
 
     @disable this(this);
 
     ~this() {
-        if (_array)
-            _allocator.dispose(_array);
+        if (_allocator)
+            _impl.free(_allocator);
+    }
+    
+    void unwrap(T)(out UnmanagedArray!T dest) {
+        dest = move(_impl);
+        assert(_impl == UnmanagedArray!T());
     }
 
-    size_t length() const {
-        return _length;
-    }
+    size_t length() const { return _impl.length(); }
 
-    size_t capacity() const {
-        return _array.length;
-    }
+    size_t capacity() const { return _impl.capacity(); }
 
-    void clear() {
-        _length = 0;
-    }
+    void clear() { _impl.clear(); }
 
-    void reserve(size_t min_size) {
-        if (_array.length < min_size)
-            _allocator.resize_array(_array, min_size);
-    }
+    void reserve(size_t min_size) { _impl.reserve(_allocator, min_size); }
 
-    void trim() {
-        trim((size_t s, ref T t) {
-            static if (hasElaborateDestructor!T)
-                destroy(t);
-        });
-    }
+    void reserve_extra(size_t extra) { _impl.reserve_extra(_allocator, extra); }
 
-    void trim(scope void delegate(size_t, ref T) nothrow on_destroy) {
-        _allocator.resize_array(
-            _array,
-            _length,
-            (size_t s, ref T t) {},
-            on_destroy
-        );
-    }
+    size_t push_back()(auto ref T value) { return _impl.push_back(_allocator, value); }
 
-    size_t push_back()(auto ref T value) {
-        if (_length == _array.length)
-            _grow();
+    size_t push_back()(T[] values...) { return _impl.push_back(_allocator, values); }
 
-        const index = _length;
-        _array[_length] = move(value);
-        _length++;
-        return index;
-    }
+    T pop_back() { return _impl.pop_back(); }
 
-    size_t push_back()(T[] values...) {
-        while (_length + values.length > _array.length)
-            _grow();
-        
-        const first = _length;
-        _array[_length .. _length + values.length] = values;
-        _length += values.length;
-        return first;
-    }
+    ref inout(T) opIndex(size_t index) inout { return _impl.opIndex(index); }
 
-    T pop_back() {
-        assert(_length > 0);
-
-        scope (exit)
-            _length--;
-
-        return move(_array[_length - 1]);
-    }
-
-    ref inout(T) opIndex(size_t index) inout in (index < length) {
-        return _array[index];
-    }
-
-    inout(T[]) opIndex() inout {
-        return _array[0 .. _length];
-    }
+    inout(T[]) opIndex() inout { return _impl.opIndex(); }
 
 private:
-    void _grow() {
-        if (_array.length == 0)
-            _array = _allocator.make_array!T(default_initial_size);
-        else {
-            const resized = _allocator.resize_array(_array, _array.length * 2);
-            if (!resized)
-                assert(0, "Out of memory! Array could not be expanded");
-        }
-    }
+    Allocator _allocator;
+    UnmanagedArray!T _impl;
 
-    Allocator _allocator; 
-    size_t _length;
-    T[] _array;
+    static assert(Array!T.sizeof == 24);
 }
 
 unittest {
@@ -149,4 +95,117 @@ unittest {
         assert(arr.pop_back().value == i);
         assert(arr.length == i);
     }
+}
+
+struct UnmanagedArray(T) {
+        enum default_initial_size = 8;
+
+nothrow public:
+    this(Allocator allocator, size_t initial_size = default_initial_size) {
+        _resize(allocator, initial_size);
+    }
+
+    @disable this(this);
+
+    ~this() {
+        assert(_p,
+            "Unmanaged array was not freed before destruction. call free(Allocator) before destroying.");
+    }
+
+    void free(Allocator allocator) {
+        allocator.dispose(_p[0 .. _capacity]);
+    }
+
+    size_t length() const {
+        return _length;
+    }
+
+    size_t capacity() const {
+        return _capacity;
+    }
+
+    void clear() {
+        _length = 0;
+    }
+
+    void reserve(Allocator allocator, size_t min_size) {
+        if (_capacity < min_size) {
+            _resize(allocator, min_size);
+        }
+    }
+
+    void reserve_extra(Allocator allocator, size_t extra) {
+        while (_capacity < _length + extra)
+            _grow(allocator);
+    }
+                                                             
+    size_t push_back()(Allocator allocator, ref T value) {
+        if (_length == _capacity)
+            _grow(allocator);
+
+        const index = _length;
+        _p[_length] = move(value);
+        _length++;
+        return index;
+    }
+
+    size_t push_back()(Allocator allocator, T[] values...) {
+        while (_length + values.length > _capacity)
+            _grow(allocator);
+
+        const first = _length;
+        _p[_length .. _length + values.length] = values;
+        _length += values.length;
+        return first;
+    }
+
+    T pop_back() {
+        assert(_length > 0);
+
+        scope (exit)
+            _length--;
+
+        return move(_p[_length - 1]);
+    }
+
+    ref inout(T) opIndex(size_t index) inout in (index < length) {
+        return _p[index];
+    }
+
+    inout(T[]) opIndex() inout {
+        return _p[0 .. _length];
+    }
+
+private:
+    void _grow(Allocator allocator) {
+        // If array was constructed with initial_size == 0.
+        if (_capacity == 0) {
+            assert(default_initial_size < _capacity.max);
+            auto arr = allocator.make_array!T(default_initial_size);
+            assert(arr, "Out of memory! Array could not be expanded");
+            _p = &arr[0];
+            _capacity = cast(uint) arr.length;
+        }
+        else
+            _resize(allocator, _capacity * 2);
+    }
+
+    void _resize(Allocator allocator, size_t size) {
+        assert(size < uint.max, "Array max length = uint.max");
+
+        auto arr = _p[0 .. _capacity];
+        if (!allocator.resize_array(arr, cast(uint) size))
+            assert(0, "Out of memory! Array could not be expanded");
+
+        // resize_array() may have reallocated, so get the new pointer
+        _p = &arr[0];
+        assert(arr.length == size, "Assumption failure.");
+        _capacity = cast(uint) arr.length;
+    }
+
+    T* _p;
+    uint _length;
+    uint _capacity;
+
+    static assert(UnmanagedArray!T.sizeof == 16);
 }
