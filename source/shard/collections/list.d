@@ -1,4 +1,4 @@
-module shard.list;
+module shard.collections.list;
 
 mixin template intrusive_list(T) {
     T* prev, next;

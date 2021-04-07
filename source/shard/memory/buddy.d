@@ -3,7 +3,7 @@ module shard.memory.buddy;
 import shard.math_util : ilog2, is_power_of_two;
 import shard.memory.allocator : Allocator;
 import shard.memory.common;
-import shard.bit_array;
+import shard.collections.bit_array;
 
 enum min_chunk_size = 128;
 enum min_allocator_size = 2 * min_chunk_size;

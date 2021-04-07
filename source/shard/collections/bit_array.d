@@ -1,4 +1,4 @@
-module shard.bit_array;
+module shard.collections.bit_array;
 
 import shard.memory : Allocator;
 import core.stdc.string : memset;

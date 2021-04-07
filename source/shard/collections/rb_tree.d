@@ -1,4 +1,4 @@
-module shard.rb_tree;
+module shard.collections.rb_tree;
 
 import shard.memory : Allocator;
 import shard.pad : pad_bytes;

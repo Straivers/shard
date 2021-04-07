@@ -1,4 +1,4 @@
-module shard.array;
+module shard.collections.array;
 
 import shard.memory : Allocator;
 import std.algorithm : move;

@@ -1,4 +1,4 @@
-module shard.ring_buffer;
+module shard.collections.ring_buffer;
 
 struct FixedRingBuffer(T, size_t size) {
 
