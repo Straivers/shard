@@ -33,20 +33,20 @@ public nothrow:
         return _impl.get_optimal_alloc_size(size);
     }
 
-    void[] allocate(size_t size) {
-        return _impl.allocate(size);
+    void[] allocate(size_t size, string file = __FILE__, uint line = __LINE__) {
+        return _impl.allocate(size, file, line);
     }
 
-    bool deallocate(ref void[] memory) {
-        return _impl.deallocate(memory);
+    bool deallocate(ref void[] memory, string file = __FILE__, uint line = __LINE__) {
+        return _impl.deallocate(memory, file, line);
     }
 
-    bool resize(ref void[] memory, size_t size) {
-        return _impl.resize(memory, size);
+    bool resize(ref void[] memory, size_t size, string file = __FILE__, uint line = __LINE__) {
+        return _impl.resize(memory, size, file, line);
     }
 
-    bool reallocate(ref void[] memory, size_t new_size) {
-        return _impl.reallocate(memory, new_size);
+    bool reallocate(ref void[] memory, size_t new_size, string file = __FILE__, uint line = __LINE__) {
+        return _impl.reallocate(memory, new_size, file, line);
     }
 
 private:
@@ -95,7 +95,7 @@ struct UnmanagedArena {
         return round_to_next(size, alignment);
     }
 
-    void[] allocate(size_t size) {
+    void[] allocate(size_t size, string file = __FILE__, uint line = __LINE__) {
         const alloc_size = get_optimal_alloc_size(size);
 
         if (alloc_size > 0 && _top + alloc_size <= _end) {
@@ -107,7 +107,8 @@ struct UnmanagedArena {
         return [];
     }
 
-    bool deallocate(ref void[] memory) in (owns(memory) == Ternary.yes) {
+    bool deallocate(ref void[] memory, string file = __FILE__, uint line = __LINE__)
+    in (owns(memory) == Ternary.yes) {
         if (memory is null)
             return true;
 
@@ -122,7 +123,8 @@ struct UnmanagedArena {
         return false;
     }
 
-    bool resize(ref void[] memory, size_t size) in (owns(memory) == Ternary.yes) {
+    bool resize(ref void[] memory, size_t size, string file = __FILE__, uint line = __LINE__)
+    in (owns(memory) == Ternary.yes) {
         if (memory == null || size == 0)
             return false;
 
@@ -144,7 +146,8 @@ struct UnmanagedArena {
         return false;
     }
 
-    bool reallocate(ref void[] memory, size_t new_size) in (owns(memory) == Ternary.yes) {
+    bool reallocate(ref void[] memory, size_t new_size, string file = __FILE__, uint line = __LINE__)
+    in (owns(memory) == Ternary.yes) {
         if (new_size == 0 && deallocate(memory)) {
             memory = null;
             return true;

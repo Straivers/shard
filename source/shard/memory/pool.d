@@ -80,7 +80,7 @@ public nothrow:
         return 0;
     }
 
-    void[] allocate(size_t size) {
+    void[] allocate(size_t size, string file = __FILE__, uint line = __LINE__) {
         if (size > _block_size || _freelist_index >= _num_blocks)
             return null;
         
@@ -90,11 +90,11 @@ public nothrow:
         return memset(block, 0, size)[0 .. size];
     }
 
-    bool deallocate(void[] memory) {
+    bool deallocate(void[] memory, string file = __FILE__, uint line = __LINE__) {
         return deallocate(memory);
     }
 
-    bool deallocate(ref void[] memory) {
+    bool deallocate(ref void[] memory, string file = __FILE__, uint line = __LINE__) {
         assert(owns(memory) == Ternary.yes);
 
         if (memory is null)

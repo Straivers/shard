@@ -46,7 +46,7 @@ struct MemoryTracker(Allocator) {
     static if (hasMember!(Allocator, "get_optimal_alloc_size"))
         size_t get_optimal_alloc_size(size_t size) const nothrow { return _allocator.get_optimal_alloc_size(size); }
 
-    void[] allocate(size_t size) {
+    void[] allocate(size_t size, string file = __FILE__, uint line = __LINE__) {
         if (auto p = _allocator.allocate(size)) {
             _stats.bytes_allocated += size;
             _stats.num_allocations++;
@@ -63,7 +63,7 @@ struct MemoryTracker(Allocator) {
     }
 
     static if (hasMember!(Allocator, "deallocate"))
-        bool deallocate(ref void[] memory) nothrow {
+        bool deallocate(ref void[] memory, string file = __FILE__, uint line = __LINE__) nothrow {
             const size = memory.length;
             const ok = _allocator.deallocate(memory);
             if (ok) {
@@ -74,10 +74,14 @@ struct MemoryTracker(Allocator) {
         }
 
     static if (hasMember!(Allocator, "reallocate"))
-        bool reallocate(ref void[] memory, size_t new_size) nothrow { return _allocator.reallocate(memory, new_size); }
+        bool reallocate(ref void[] memory, size_t new_size, string file = __FILE__, uint line = __LINE__) nothrow {
+            return _allocator.reallocate(memory, new_size, file, line);
+        }
 
     static if (hasMember!(Allocator, "resize"))
-        bool resize(ref void[] memory, size_t new_size) nothrow { return _allocator.resize(memory, new_size); }
+        bool resize(ref void[] memory, size_t new_size, string file = __FILE__, uint line = __LINE__) nothrow {
+            return _allocator.resize(memory, new_size, file, line);
+        }
 
 private:
     Allocator _allocator;

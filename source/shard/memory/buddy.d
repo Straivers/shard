@@ -60,7 +60,7 @@ public nothrow:
         return size == 0 ? 0 : Order.of(size).chunk_size;
     }
 
-    void[] allocate(size_t size) {
+    void[] allocate(size_t size, string file = __FILE__, uint line = __LINE__) {
         assert(_max_order.chunk_size > size);
 
         if (size == 0)
@@ -72,13 +72,13 @@ public nothrow:
         return [];
     }
 
-    bool deallocate(ref void[] bytes) {
+    bool deallocate(ref void[] bytes, string file = __FILE__, uint line = __LINE__) {
         auto value = _deallocate(bytes);
         bytes = null;
         return value;
     }
 
-    bool resize(ref void[] memory, size_t new_size) {
+    bool resize(ref void[] memory, size_t new_size, string file = __FILE__, uint line = __LINE__) {
         if (memory == null || new_size == 0)
             return false;
 
@@ -122,7 +122,7 @@ public nothrow:
         return false;
     }
 
-    bool reallocate(ref void[] memory, size_t new_size) {
+    bool reallocate(ref void[] memory, size_t new_size, string file = __FILE__, uint line = __LINE__) {
         if (resize(memory, new_size))
             return true;
         
