@@ -293,7 +293,7 @@ void dispose(T, A)(auto ref A allocator, auto ref T[] p, string file = __MODULE_
         foreach (ref e; p)
             destroy(e);
     
-    allocator.deallocate(p, file, line);
+    allocator.deallocate(cast(void[]) p, file, line);
 
     static if (__traits(isRef, p))
         p = null;
