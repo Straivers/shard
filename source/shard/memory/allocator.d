@@ -5,7 +5,7 @@ import shard.memory.measures;
 import std.traits : hasElaborateDestructor, hasMember;
 import core.lifetime : emplace;
 import core.checkedint : mulu;
-import std.algorithm : max, min;
+import std.algorithm : max, min, uninitializedFill;
 
 // Re-export Ternary from common, which re-exports std.typecons.Ternary.
 public import shard.memory.common: Ternary;
@@ -111,7 +111,7 @@ abstract class Allocator {
 
     /// Forward shard.memory.make()
     auto make(T, string file = __MODULE__, uint line = __LINE__, A...)(auto ref A args) {
-        return make_impl!T(this, file, line, args);
+        return init_obj!T(allocate(max(object_size!T, 1), file, line), args);
     }
 
     /// Forward shard.memory.make_array()
@@ -138,10 +138,8 @@ abstract class Allocator {
     bool resize_array(T)(
             ref T[] array,
             size_t new_length,
-            scope void delegate(size_t, ref T) nothrow init_obj = null,
-            scope void delegate(size_t, ref T) nothrow clear_obj = null,
             string file = __MODULE__, uint line = __LINE__) {
-        return shard.memory.resize_array(this, array, new_length, init_obj, clear_obj, file, line);
+        return shard.memory.resize_array(this, array, new_length, file, line);
     }
 }
 
@@ -204,12 +202,11 @@ nothrow public:
 }
 
 PtrType!T make(T, A, string file = __MODULE__, uint line = __LINE__, Args...)(auto ref A allocator, Args args) {
-    return make_impl!T(allocator, file, line, args);
+    return init_obj!T(allocator.allocate(max(object_size!T, 1), file, line), args);
 }
 
-private PtrType!T make_impl(T, A, Args...)(auto ref A allocator, string file, uint line, Args args) {
+private PtrType!T init_obj(T, Args...)(void[] m, Args args) {
     // Support 0-size structs
-    void[] m = allocator.allocate(max(object_size!T, 1), file, line);
     if (!m.ptr) return null;
 
     static if (is(T == class))
@@ -222,25 +219,28 @@ private PtrType!T make_impl(T, A, Args...)(auto ref A allocator, string file, ui
 }
 
 T[] make_array(T, A)(auto ref A allocator, size_t length, string file = __MODULE__, uint line = __LINE__) {
-    import core.stdc.string : memcpy, memset;
-
     if (!length)
         return null;
-    
+
     bool overflow;
     const size = mulu(T.sizeof, length, overflow);
-    
+
     if (overflow)
         return null;
 
     auto m = allocator.allocate(size, file, line);
     if (!m.ptr)
         return null;
-    
+
     assert(m.length > 0);
+    return init_array!T(m);
+}
+
+private T[] init_array(T)(void[] m) {
+    import core.stdc.string : memcpy, memset;
 
     static if (__traits(isZeroInit, T)) {
-        memset(m.ptr, 0, size);
+        memset(m.ptr, 0, m.length);
     }
     else static if (T.sizeof == 1) {
         T t = T.init;
@@ -261,47 +261,61 @@ T[] make_array(T, A)(auto ref A allocator, size_t length, string file = __MODULE
 }
 
 void dispose(T, A)(auto ref A allocator, auto ref T* p, string file = __MODULE__, uint line = __LINE__) {
+    allocator.deallocate(destroy_obj(p), file, line);
+}
+
+package void[] destroy_obj(T)(auto ref T* p) {
     static if (hasElaborateDestructor!T)
         destroy(*p);
     
-    allocator.deallocate((cast(void*) p)[0 .. T.sizeof], file, line);
-
+    auto m = (cast(void*) p)[0 .. T.sizeof];
     static if (__traits(isRef, p))
         p = null;
+    
+    return m;
 }
 
 void dispose(T, A)(auto ref A allocator, auto ref T p, string file = __MODULE__, uint line = __LINE__)
 if (is(T == class) || is(T == interface)) {
-    if (!p)
-        return;
+    allocator.deallocate(destroy_obj(p), file, line);
+}
+
+package void[] destroy_obj(T)(auto ref T p) if (is(T == class) || is(T == interface)) {
     
     static if (is(T == interface))
         auto ob = cast(Object) p;
     else
         alias ob = p;
-    
+
     auto support = (cast(void*) ob)[0 .. typeid(ob).initializer.length];
     destroy(p);
-    allocator.deallocate(support, file, line);
 
     static if (__traits(isRef, p))
         p = null;
+    
+    return support;
 }
 
 void dispose(T, A)(auto ref A allocator, auto ref T[] p, string file = __MODULE__, uint line = __LINE__) {
+    allocator.deallocate(destroy_obj(p), file, line);
+}
+
+package void[] destroy_obj(T)(auto ref T[] p) {
     static if (hasElaborateDestructor!(typeof(p[0])))
         foreach (ref e; p)
             destroy(e);
-    
-    allocator.deallocate(cast(void[]) p, file, line);
+
+    auto m = cast(void[]) p;
 
     static if (__traits(isRef, p))
         p = null;
+    
+    return m;
 }
 
 /**
-Resizes an array to `new_length` elements, calling `init_obj` on newly
-allocated objects, and `clear_obj` on objects to be deallocated.
+Resizes an array to `new_length` elements, calling `ctor` on newly
+allocated objects, and `dtor` on objects to be deallocated.
 
 If `new_length > 0` and `array == null`, a new array will be allocated, and the
 slice assigned to `array`. Similarly, if `new_length == 0` and `array != null`,
@@ -311,15 +325,13 @@ Params:
     allocator   = The allocator that the array was allocated from.
     array       = The array to be resized. May be `null`.
     new_length  = The length of the array after resizing. May be `0`.
-    init_obj    = The delegate to call on newly allocated array elements (during array expansion).
-    clear_obj   = The delegate to call on array elements that will be freed (during array reduction).
+    ctor        = The delegate to call on newly allocated array elements (during array expansion).
+    dtor        = The delegate to call on array elements that will be freed (during array reduction).
 */
 bool resize_array(T, A)(
         auto ref A allocator,
         ref T[] array,
         size_t new_length,
-        scope void delegate(size_t, ref T) nothrow init_obj = null,
-        scope void delegate(size_t, ref T) nothrow clear_obj = null,
         string file = __MODULE__, uint line = __LINE__) nothrow {
     import std.algorithm: min;
 
@@ -328,27 +340,34 @@ bool resize_array(T, A)(
     if (new_length == array.length)
         return true;
 
-    const common_length = min(array.length, new_length);
-
-    if (new_length < array.length && clear_obj) {
-        foreach (i, ref object; array[new_length .. $])
-            clear_obj(i, object);
-    }
+    const old_length = array.length;
+    if (new_length < array.length)
+        shrink_array(array, new_length);
 
     void[] array_ = array;
     if (!allocator.reallocate(array_, T.sizeof * new_length, file, line))
         return false;
     array = cast(T[]) array_;
 
-    if (common_length < new_length && init_obj) {
-        foreach (i, ref object; array[common_length .. $])
-            init_obj(i, object);
-    }
+    if (old_length < new_length)
+        grow_array(array, old_length);
 
     return true;
 }
 
-// public import std.experimental.allocator: dispose;
+package void shrink_array(T)(ref T[] array, size_t new_length) nothrow {
+    assert(new_length < array.length);
+
+    static if (hasElaborateDestructor!T)
+    foreach (ref t; array)
+        destroy(t);
+}
+
+package void grow_array(T)(ref T[] array, size_t old_length) nothrow {
+    assert(old_length < array.length);
+
+    uninitializedFill(array[old_length .. $], T.init);
+}
 
 version (unittest) {
     void test_allocate_api(AllocatorType)(ref AllocatorType allocator) {
