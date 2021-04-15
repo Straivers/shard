@@ -1,6 +1,5 @@
 module shard.memory.mem_api;
 
-import shard.memory.tracker;
 import shard.memory.measures : mib;
 import shard.memory.allocator : Allocator, AllocatorApi;
 import shard.memory.buddy : BuddyAllocator;
@@ -14,10 +13,10 @@ struct MemoryApi {
     import core.stdc.stdlib : malloc, free;
 
     this(size_t temp_size) {
-        _sys_allocator = scoped!(AllocatorApi!(MemoryTracker!SysAllocator))();
+        _sys_allocator = scoped!(AllocatorApi!(SysAllocator))();
 
         _temp_region = malloc(temp_size)[0 .. temp_size];
-        _temp_allocator = scoped!(AllocatorApi!(MemoryTracker!BuddyAllocator))(_temp_region);
+        _temp_allocator = scoped!(AllocatorApi!(BuddyAllocator))(_temp_region);
         temp_region_size = temp_size;
 
         _vm = VirtualAllocator();
@@ -27,10 +26,6 @@ struct MemoryApi {
         destroy(_sys_allocator);
         destroy(_temp_allocator);
         free(_temp_region.ptr);
-    }
-
-    void get_sys_stats(out MemoryStats stats) {
-        _sys_allocator.impl.get_stats(stats);
     }
 
     Allocator sys() nothrow {
@@ -48,8 +43,8 @@ struct MemoryApi {
     const size_t temp_region_size;
 
 private:
-    typeof(scoped!(AllocatorApi!(MemoryTracker!SysAllocator))()) _sys_allocator;
-    typeof(scoped!(AllocatorApi!(MemoryTracker!BuddyAllocator))([])) _temp_allocator;
+    typeof(scoped!(AllocatorApi!(SysAllocator))()) _sys_allocator;
+    typeof(scoped!(AllocatorApi!(BuddyAllocator))([])) _temp_allocator;
     VirtualAllocator _vm;
 
     void[] _temp_region;
