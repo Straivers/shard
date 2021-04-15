@@ -2,7 +2,7 @@ module shard.memory.allocator;
 
 import shard.memory.common;
 import shard.memory.measures;
-import std.traits : hasElaborateDestructor, hasMember;
+import std.traits : hasElaborateDestructor, hasMember, fullyQualifiedName;
 import core.lifetime : emplace;
 import core.checkedint : mulu;
 import std.algorithm : max, min;
@@ -207,6 +207,8 @@ PtrType!T make(T, A, Args...)(auto ref A allocator, Args args) {
     void[] m = allocator.allocate(max(object_size!T, 1));
     if (!m.ptr) return null;
 
+    // g_mem_tracker.record_allocate(allocator, fullyQualifiedName!T, m);
+
     static if (is(T == class))
         return emplace!T(m, args);
     else {
@@ -232,6 +234,8 @@ T[] make_array(T, A)(auto ref A allocator, size_t length) {
     if (!m.ptr)
         return null;
     
+    // g_mem_tracker.record_allocate(allocator, fullyQualifiedName!T, m);
+
     assert(m.length > 0);
 
     static if (__traits(isZeroInit, T)) {
@@ -258,7 +262,9 @@ T[] make_array(T, A)(auto ref A allocator, size_t length) {
 void dispose(T, A)(auto ref A allocator, auto ref T* p) {
     static if (hasElaborateDestructor!T)
         destroy(*p);
-    
+
+    // void[] memory = (cast(void*) p)[0 .. T.sizeof];
+    // g_mem_tracker.record_deallocate(allocator, fullyQualifiedName!T, memory);
     allocator.deallocate((cast(void*) p)[0 .. T.sizeof]);
 
     static if (__traits(isRef, p))
@@ -276,6 +282,7 @@ if (is(T == class) || is(T == interface)) {
         alias ob = p;
     
     auto support = (cast(void*) ob)[0 .. typeid(ob).initializer.length];
+    // g_mem_tracker.record_deallocate(allocator, fullyQualifiedName!T, support);
     destroy(p);
     allocator.deallocate(support);
 
@@ -288,6 +295,7 @@ void dispose(T, A)(auto ref A allocator, auto ref T[] p) {
         foreach (ref e; p)
             destroy(e);
     
+    // g_mem_tracker.record_deallocate(allocator, fullyQualifiedName!T, cast(void[]) p);
     allocator.deallocate(cast(void[]) p);
 
     static if (__traits(isRef, p))
@@ -332,6 +340,7 @@ bool resize_array(T, A)(
     void[] array_ = array;
     if (!allocator.reallocate(array_, T.sizeof * new_length))
         return false;
+    // g_mem_tracker.record_reallocate(allocator, fullyQualifiedName!T, array, array_);
     array = cast(T[]) array_;
 
     if (common_length < new_length && init_obj) {
@@ -341,8 +350,6 @@ bool resize_array(T, A)(
 
     return true;
 }
-
-// public import std.experimental.allocator: dispose;
 
 version (unittest) {
     void test_allocate_api(AllocatorType)(ref AllocatorType allocator) {
