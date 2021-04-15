@@ -9,19 +9,19 @@ struct SysAllocator {
         return size_t.sizeof;
     }
 
-    void[] allocate(size_t size, string file = __FILE__, uint line = __LINE__) nothrow {
+    void[] allocate(size_t size) nothrow {
         if (auto p = malloc(size))
             return p[0 .. size];
         else
             return [];
     }
 
-    bool deallocate(ref void[] memory, string file = __FILE__, uint line = __LINE__) nothrow {
+    bool deallocate(ref void[] memory) nothrow {
         free(memory.ptr);
         return true;
     }
 
-    bool reallocate(ref void[] memory, size_t new_size, string file = __FILE__, uint line = __LINE__) nothrow {
+    bool reallocate(ref void[] memory, size_t new_size) nothrow {
         if (auto p = realloc(memory.ptr, new_size)) {
             memory = p[0 .. new_size];
             return true;

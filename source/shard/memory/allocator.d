@@ -2,7 +2,7 @@ module shard.memory.allocator;
 
 import shard.memory.common;
 import shard.memory.measures;
-import std.traits : hasElaborateDestructor, hasMember;
+import std.traits : hasElaborateDestructor, hasMember, fullyQualifiedName;
 import core.lifetime : emplace;
 import core.checkedint : mulu;
 import std.algorithm : max, min, uninitializedFill;
@@ -51,7 +51,7 @@ abstract class Allocator {
     Returns: A block of memory of the requested size, or `null` if `size == 0`
              or the allocation failed.
     */
-    void[] allocate(size_t size, string file = __MODULE__, uint line = __LINE__) nothrow;
+    void[] allocate(size_t size) nothrow;
 
     /**
     OPTIONAL
@@ -67,11 +67,11 @@ abstract class Allocator {
              `false` if the memory was not returned, or if allocator does not
              support deallocation.
     */
-    bool deallocate(ref void[] memory, string file = __MODULE__, uint line = __LINE__) nothrow;
+    bool deallocate(ref void[] memory) nothrow;
 
     /// ditto
-    bool deallocate(void[] memory, string file = __MODULE__, uint line = __LINE__) nothrow {
-        return deallocate(memory, file, line);
+    bool deallocate(void[] memory) nothrow {
+        return deallocate(memory);
     }
 
     /**
@@ -92,7 +92,7 @@ abstract class Allocator {
 
     Returns: `true` if the memory block was reallocated, `false` otherwise.
     */
-    bool reallocate(ref void[] memory, size_t new_size, string file = __MODULE__, uint line = __LINE__) nothrow;
+    bool reallocate(ref void[] memory, size_t new_size) nothrow;
 
     /**
     OPTIONAL
@@ -107,31 +107,31 @@ abstract class Allocator {
 
     Returns: `true` if the memory block was resized, `false` otherwise.
     */
-    bool resize(ref void[] memory, size_t new_size, string file = __MODULE__, uint line = __LINE__) nothrow;
+    bool resize(ref void[] memory, size_t new_size) nothrow;
 
     /// Forward shard.memory.make()
-    auto make(T, string file = __MODULE__, uint line = __LINE__, A...)(auto ref A args) {
-        return init_obj!T(allocate(max(object_size!T, 1), file, line), args);
+    auto make(T, A...)(auto ref A args) {
+        return make!T(this, args);
     }
 
     /// Forward shard.memory.make_array()
-    auto make_array(T, string file = __MODULE__, uint line = __LINE__)(size_t length) {
-        return shard.memory.make_array!(T)(this, length, file, line);
+    auto make_array(T)(size_t length) {
+        return shard.memory.make_array!(T)(this, length);
     }
 
     /// Forward shard.memory.dispose()
-    void dispose(T, string file = __MODULE__, uint line = __LINE__)(auto ref T* p) {
-        shard.memory.dispose(this, p, file, line);
+    void dispose(T)(auto ref T* p) {
+        shard.memory.dispose(this, p);
     }
 
     /// Ditto
-    void dispose(T, string file = __MODULE__, uint line = __LINE__)(auto ref T p) if (is(T == class) || is(T == interface)) {
-        shard.memory.dispose(this, p, file, line);
+    void dispose(T)(auto ref T p) if (is(T == class) || is(T == interface)) {
+        shard.memory.dispose(this, p);
     }
 
     /// Ditto
-    void dispose(T, string file = __MODULE__, uint line = __LINE__)(auto ref T[] array) {
-        shard.memory.dispose(this, array, file, line);
+    void dispose(T)(auto ref T[] array) {
+        shard.memory.dispose(this, array);
     }
 
     /// Forward shard.memory.resize_array()
@@ -173,41 +173,40 @@ nothrow public:
             return round_to_next(size, alignment);
     }
 
-    override void[] allocate(size_t size, string file = __MODULE__, uint line = __LINE__) {
-        return impl.allocate(size, file, line);
+    override void[] allocate(size_t size) {
+        return impl.allocate(size);
     }
 
     alias deallocate = Allocator.deallocate;
 
-    override bool deallocate(ref void[] memory, string file = __MODULE__, uint line = __LINE__) {
+    override bool deallocate(ref void[] memory) {
         static if (hasMember!(T, "deallocate"))
-            return impl.deallocate(memory, file, line);
+            return impl.deallocate(memory);
         else
             return false;
     }
 
-    override bool reallocate(ref void[] memory, size_t new_size, string file = __MODULE__, uint line = __LINE__) {
+    override bool reallocate(ref void[] memory, size_t new_size) {
         static if (hasMember!(T, "reallocate"))
-            return impl.reallocate(memory, new_size, file, line);
+            return impl.reallocate(memory, new_size);
         else
             return false;
     }
 
-    override bool resize(ref void[] memory, size_t new_size, string file = __MODULE__, uint line = __LINE__) {
+    override bool resize(ref void[] memory, size_t new_size) {
         static if (hasMember!(T, "resize"))
-            return impl.resize(memory, new_size, file, line);
+            return impl.resize(memory, new_size);
         else
             return false;
     }
 }
 
-PtrType!T make(T, A, string file = __MODULE__, uint line = __LINE__, Args...)(auto ref A allocator, Args args) {
-    return init_obj!T(allocator.allocate(max(object_size!T, 1), file, line), args);
-}
-
-private PtrType!T init_obj(T, Args...)(void[] m, Args args) {
+PtrType!T make(T, A, Args...)(auto ref A allocator, Args args) {
     // Support 0-size structs
+    void[] m = allocator.allocate(max(object_size!T, 1));
     if (!m.ptr) return null;
+
+    // g_mem_tracker.record_allocate(allocator, fullyQualifiedName!T, m);
 
     static if (is(T == class))
         return emplace!T(m, args);
@@ -218,7 +217,9 @@ private PtrType!T init_obj(T, Args...)(void[] m, Args args) {
     }
 }
 
-T[] make_array(T, A)(auto ref A allocator, size_t length, string file = __MODULE__, uint line = __LINE__) {
+T[] make_array(T, A)(auto ref A allocator, size_t length) {
+    import core.stdc.string : memcpy, memset;
+
     if (!length)
         return null;
 
@@ -228,9 +229,11 @@ T[] make_array(T, A)(auto ref A allocator, size_t length, string file = __MODULE
     if (overflow)
         return null;
 
-    auto m = allocator.allocate(size, file, line);
+    auto m = allocator.allocate(size);
     if (!m.ptr)
         return null;
+    
+    // g_mem_tracker.record_allocate(allocator, fullyQualifiedName!T, m);
 
     assert(m.length > 0);
     return init_array!T(m);
@@ -260,22 +263,21 @@ private T[] init_array(T)(void[] m) {
     return (() @trusted => cast(T[]) m)();
 }
 
-void dispose(T, A)(auto ref A allocator, auto ref T* p, string file = __MODULE__, uint line = __LINE__) {
-    allocator.deallocate(destroy_obj(p), file, line);
-}
-
-package void[] destroy_obj(T)(auto ref T* p) {
+void dispose(T, A)(auto ref A allocator, auto ref T* p) {
     static if (hasElaborateDestructor!T)
         destroy(*p);
-    
-    auto m = (cast(void*) p)[0 .. T.sizeof];
+
+    // void[] memory = (cast(void*) p)[0 .. T.sizeof];
+    // g_mem_tracker.record_deallocate(allocator, fullyQualifiedName!T, memory);
+    allocator.deallocate((cast(void*) p)[0 .. T.sizeof]);
+
     static if (__traits(isRef, p))
         p = null;
     
     return m;
 }
 
-void dispose(T, A)(auto ref A allocator, auto ref T p, string file = __MODULE__, uint line = __LINE__)
+void dispose(T, A)(auto ref A allocator, auto ref T p)
 if (is(T == class) || is(T == interface)) {
     allocator.deallocate(destroy_obj(p), file, line);
 }
@@ -288,7 +290,9 @@ package void[] destroy_obj(T)(auto ref T p) if (is(T == class) || is(T == interf
         alias ob = p;
 
     auto support = (cast(void*) ob)[0 .. typeid(ob).initializer.length];
+    // g_mem_tracker.record_deallocate(allocator, fullyQualifiedName!T, support);
     destroy(p);
+    allocator.deallocate(support);
 
     static if (__traits(isRef, p))
         p = null;
@@ -296,16 +300,13 @@ package void[] destroy_obj(T)(auto ref T p) if (is(T == class) || is(T == interf
     return support;
 }
 
-void dispose(T, A)(auto ref A allocator, auto ref T[] p, string file = __MODULE__, uint line = __LINE__) {
-    allocator.deallocate(destroy_obj(p), file, line);
-}
-
-package void[] destroy_obj(T)(auto ref T[] p) {
+void dispose(T, A)(auto ref A allocator, auto ref T[] p) {
     static if (hasElaborateDestructor!(typeof(p[0])))
         foreach (ref e; p)
             destroy(e);
-
-    auto m = cast(void[]) p;
+    
+    // g_mem_tracker.record_deallocate(allocator, fullyQualifiedName!T, cast(void[]) p);
+    allocator.deallocate(cast(void[]) p);
 
     static if (__traits(isRef, p))
         p = null;
@@ -341,32 +342,22 @@ bool resize_array(T, A)(
         return true;
 
     const old_length = array.length;
-    if (new_length < array.length)
-        shrink_array(array, new_length);
+    static if (hasElaborateDestructor!T)
+    if (new_length < array.length) {
+        foreach (ref object; array[new_length .. $])
+            destroy(object);
+    }
 
     void[] array_ = array;
-    if (!allocator.reallocate(array_, T.sizeof * new_length, file, line))
+    if (!allocator.reallocate(array_, T.sizeof * new_length))
         return false;
+    // g_mem_tracker.record_reallocate(allocator, fullyQualifiedName!T, array, array_);
     array = cast(T[]) array_;
 
     if (old_length < new_length)
-        grow_array(array, old_length);
+        uninitializedFill(array[old_length .. $], T.init);
 
     return true;
-}
-
-package void shrink_array(T)(ref T[] array, size_t new_length) nothrow {
-    assert(new_length < array.length);
-
-    static if (hasElaborateDestructor!T)
-    foreach (ref t; array)
-        destroy(t);
-}
-
-package void grow_array(T)(ref T[] array, size_t old_length) nothrow {
-    assert(old_length < array.length);
-
-    uninitializedFill(array[old_length .. $], T.init);
 }
 
 version (unittest) {

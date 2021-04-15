@@ -8,5 +8,4 @@ public import shard.memory.mem_api;
 public import shard.memory.pool;
 public import shard.memory.sys_allocator;
 public import shard.memory.temp;
-public import shard.memory.tracker;
 public import shard.memory.virtual_allocator;

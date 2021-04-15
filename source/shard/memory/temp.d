@@ -39,22 +39,22 @@ struct ScopedArena {
             return arena.get_optimal_alloc_size(size);
         }
 
-        override void[] allocate(size_t size, string file = __FILE__, uint line = __LINE__) {
-            return arena.allocate(size, file, line);
+        override void[] allocate(size_t size) {
+            return arena.allocate(size);
         }
 
         alias deallocate = Allocator.deallocate;
 
-        override bool deallocate(ref void[] memory, string file = __FILE__, uint line = __LINE__) {
-            return arena.deallocate(memory, file, line);
+        override bool deallocate(ref void[] memory) {
+            return arena.deallocate(memory);
         }
 
-        override bool reallocate(ref void[] memory, size_t new_size, string file = __FILE__, uint line = __LINE__) {
-            return arena.reallocate(memory, new_size, file, line);
+        override bool reallocate(ref void[] memory, size_t new_size) {
+            return arena.reallocate(memory, new_size);
         }
 
-        override bool resize(ref void[] memory, size_t new_size, string file = __FILE__, uint line = __LINE__) {
-            return arena.resize(memory, new_size, file, line);
+        override bool resize(ref void[] memory, size_t new_size) {
+            return arena.resize(memory, new_size);
         }
 
     }

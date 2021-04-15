@@ -1,89 +1,86 @@
 module shard.memory.tracker;
 
-import shard.memory.common : Ternary;
-import std.traits: hasMember, isPointer;
+import shard.collections.array : UnmanagedArray;
+import shard.handle_pool;
+import shard.memory.allocator : Allocator;
+import shard.os.time : OsClockApi, TimeStamp;
+import std.bitmanip : bitfields;
 
-struct MemoryStats {
-    size_t bytes_allocated;
-    size_t most_bytes_allocated;
+enum tracked_allocator_handle_name = "shard_memory_tracker_handle";
+alias TrackedAllocatorId = Handle32!tracked_allocator_handle_name;
 
-    size_t total_allocations;
-    size_t num_allocations;
-    size_t num_failed_allocations;
-}
-
-struct MemoryTracker(Allocator) {
-    static if (is(Allocator == struct))
-        this(A...)(A args) {
-            _allocator = Allocator(args);
-        }
-    else static if (is(isPointer!Allocator)) {
-        this(Allocator allocator) {
-            _allocator = allocator;
-        }
+final class MemoryTracker {
+    this(OsClockApi clock, Allocator sys_allocator) {
+        _clock = clock;
+        _sys_allocator = sys_allocator;
+        _sys_allocator_id = add_allocator(TrackedAllocatorId());
     }
-    else static if (is(Allocator == class) || is(Allocator == interface))
-        this(Allocator allocator) {
-            _allocator = allocator;
-        }
-    else static assert(0, "Unconsidered case.");
-
-    @disable this(this);
 
     ~this() {
-        destroy(_allocator);
     }
 
-    void get_stats(out MemoryStats stats) {
-        stats = _stats;
+    const TrackedAllocatorId sys_allocator_id() {
+        return _sys_allocator_id;
     }
 
-    size_t alignment() const nothrow { return _allocator.alignment; }
+    TrackedAllocatorId add_allocator(TrackedAllocatorId parent) {
 
-    static if (hasMember!(Allocator, "owns"))
-        Ternary owns(void[] memory) const nothrow { return _allocator.owns(memory); }
-
-    static if (hasMember!(Allocator, "get_optimal_alloc_size"))
-        size_t get_optimal_alloc_size(size_t size) const nothrow { return _allocator.get_optimal_alloc_size(size); }
-
-    void[] allocate(size_t size, string file = __FILE__, uint line = __LINE__) {
-        if (auto p = _allocator.allocate(size)) {
-            _stats.bytes_allocated += size;
-            _stats.num_allocations++;
-            _stats.total_allocations++;
-
-            if (_stats.bytes_allocated > _stats.most_bytes_allocated)
-                _stats.most_bytes_allocated = _stats.bytes_allocated;
-            return p;
-        }
-        else {
-            _stats.num_failed_allocations++;
-            return [];
-        }
     }
 
-    static if (hasMember!(Allocator, "deallocate"))
-        bool deallocate(ref void[] memory, string file = __FILE__, uint line = __LINE__) nothrow {
-            const size = memory.length;
-            const ok = _allocator.deallocate(memory);
-            if (ok) {
-                _stats.bytes_allocated -= size;
-                _stats.num_allocations--;
-            }
-            return ok;
-        }
+    void remove_allocator(TrackedAllocatorId allocator) {
 
-    static if (hasMember!(Allocator, "reallocate"))
-        bool reallocate(ref void[] memory, size_t new_size, string file = __FILE__, uint line = __LINE__) nothrow {
-            return _allocator.reallocate(memory, new_size, file, line);
-        }
+    }
 
-    static if (hasMember!(Allocator, "resize"))
-        bool resize(ref void[] memory, size_t new_size, string file = __FILE__, uint line = __LINE__) nothrow {
-            return _allocator.resize(memory, new_size, file, line);
-        }
+    void record_allocate(TrackedAllocatorId allocator, string type_name, void[] memory) {
+
+    }
+
+    void record_deallocate(TrackedAllocatorId allocator, string type_name, void[] memory) {
+
+    }
+
+    void record_reallocate(TrackedAllocatorId allocator, string type_name, void[] old_place, void[] new_place) {
+
+    }
 
 private:
-    Allocator _allocator;
-    MemoryStats _stats;
+    OsClockApi _clock;
+
+    Allocator _sys_allocator;
+    TrackedAllocatorId _sys_allocator_id;
+
+    size_t _free_list_length;
+    AllocatorInfo* _free_list;
+
+    // StringCache _string_cache;
+
+    void[512 * size_t.sizeof] _allocator_mem;
+    HandlePool!(AllocatorInfo*, tracked_allocator_handle_name, 512) _allocators;
+}
+
+private:
+
+struct MemoryOp {
+    enum Kind: ubyte {
+        None = 0,
+        Allocate = 1,
+        Deallocate = 2,
+        Reallocate = 3
+    }
+
+    TimeStamp time;
+    string type_name;
+    size_t memory1;
+    size_t memory2;
+
+    mixin(bitfields(
+        Kind, "kind", 2,
+        size_t, "size1", 31,
+        size_t, "size2", 31
+    ));
+}
+
+struct AllocatorInfo {
+    AllocatorInfo* next_free;
+    UnmanagedArray!MemoryOp ops;
 }
