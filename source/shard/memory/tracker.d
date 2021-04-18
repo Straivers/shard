@@ -24,23 +24,23 @@ final class MemoryTracker {
     }
 
     TrackedAllocatorId add_allocator(TrackedAllocatorId parent) {
-
+        assert(0, "Not Implemented");
     }
 
     void remove_allocator(TrackedAllocatorId allocator) {
-
+        assert(0, "Not Implemented");
     }
 
     void record_allocate(TrackedAllocatorId allocator, string type_name, void[] memory) {
-
+        assert(0, "Not Implemented");
     }
 
     void record_deallocate(TrackedAllocatorId allocator, string type_name, void[] memory) {
-
+        assert(0, "Not Implemented");
     }
 
     void record_reallocate(TrackedAllocatorId allocator, string type_name, void[] old_place, void[] new_place) {
-
+        assert(0, "Not Implemented");
     }
 
 private:

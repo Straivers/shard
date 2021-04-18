@@ -273,8 +273,6 @@ void dispose(T, A)(auto ref A allocator, auto ref T* p) {
 
     static if (__traits(isRef, p))
         p = null;
-    
-    return m;
 }
 
 void dispose(T, A)(auto ref A allocator, auto ref T p)
@@ -310,8 +308,6 @@ void dispose(T, A)(auto ref A allocator, auto ref T[] p) {
 
     static if (__traits(isRef, p))
         p = null;
-    
-    return m;
 }
 
 /**
