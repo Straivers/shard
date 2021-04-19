@@ -5,7 +5,7 @@ import shard.memory.measures;
 import std.traits : hasElaborateDestructor, hasMember, fullyQualifiedName;
 import core.lifetime : emplace;
 import core.checkedint : mulu;
-import std.algorithm : max, min, uninitializedFill;
+import std.algorithm : max, min;
 
 // Re-export Ternary from common, which re-exports std.typecons.Ternary.
 public import shard.memory.common: Ternary;
@@ -111,7 +111,7 @@ abstract class Allocator {
 
     /// Forward shard.memory.make()
     auto make(T, A...)(auto ref A args) {
-        return make!T(this, args);
+        return shard.memory.make!T(this, args);
     }
 
     /// Forward shard.memory.make_array()
@@ -135,11 +135,8 @@ abstract class Allocator {
     }
 
     /// Forward shard.memory.resize_array()
-    bool resize_array(T)(
-            ref T[] array,
-            size_t new_length,
-            string file = __MODULE__, uint line = __LINE__) {
-        return shard.memory.resize_array(this, array, new_length, file, line);
+    bool resize_array(T)(ref T[] array, size_t new_length) nothrow {
+        return shard.memory.resize_array(this, array, new_length);
     }
 }
 
@@ -325,35 +322,44 @@ Params:
     ctor        = The delegate to call on newly allocated array elements (during array expansion).
     dtor        = The delegate to call on array elements that will be freed (during array reduction).
 */
-bool resize_array(T, A)(
-        auto ref A allocator,
-        ref T[] array,
-        size_t new_length,
-        string file = __MODULE__, uint line = __LINE__) nothrow {
+bool resize_array(T, A)(auto ref A allocator, ref T[] array, size_t new_length) nothrow {
     import std.algorithm: min;
 
     static assert(!hasMember!(T, "opPostMove"), "Move construction on array reallocation not supported!");
 
+    bool do_resize() {
+        void[] array_ = array;
+        if (!allocator.reallocate(array_, T.sizeof * new_length))
+            return false;
+        // g_mem_tracker.record_reallocate(allocator, fullyQualifiedName!T, array, array_);
+        array = cast(T[]) array_;
+        return true;
+    }
+
     if (new_length == array.length)
         return true;
 
-    const old_length = array.length;
-    static if (hasElaborateDestructor!T)
     if (new_length < array.length) {
-        foreach (ref object; array[new_length .. $])
-            destroy(object);
+        static if (hasElaborateDestructor!T)
+            foreach (ref object; array[new_length .. $])
+                destroy(object);
+            
+        return do_resize();
     }
+    else {
+        const old_length = array.length;
 
-    void[] array_ = array;
-    if (!allocator.reallocate(array_, T.sizeof * new_length))
-        return false;
-    // g_mem_tracker.record_reallocate(allocator, fullyQualifiedName!T, array, array_);
-    array = cast(T[]) array_;
+        if (!do_resize())
+            return false;
 
-    if (old_length < new_length)
-        uninitializedFill(array[old_length .. $], T.init);
+        static if (is(typeof(array[] = T.init)))
+            array[old_length .. $] = T.init;
+        else
+            foreach (ref e; array[old_length .. $])
+                e = T.init;
 
-    return true;
+        return true;
+    }
 }
 
 version (unittest) {

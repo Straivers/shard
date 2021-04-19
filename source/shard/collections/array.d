@@ -155,7 +155,12 @@ nothrow public:
             _grow(allocator);
 
         const first = _length;
-        _p[_length .. _length + values.length] = values;
+        static if (is(typeof(_p[] = values)))
+            _p[_length .. _length + values.length] = values;
+        else
+            foreach (i, ref v; values)
+                _p[_length + i] = move(v);
+
         _length += values.length;
         return first;
     }
