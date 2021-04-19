@@ -233,11 +233,6 @@ T[] make_array(T, A)(auto ref A allocator, size_t length) {
     // g_mem_tracker.record_allocate(allocator, fullyQualifiedName!T, m);
 
     assert(m.length > 0);
-    return init_array!T(m);
-}
-
-private T[] init_array(T)(void[] m) {
-    import core.stdc.string : memcpy, memset;
 
     static if (__traits(isZeroInit, T)) {
         memset(m.ptr, 0, m.length);
