@@ -1,25 +1,46 @@
 module shard.hash;
 
+import std.digest.murmurhash: digest, MurmurHash3;
+import core.stdc.string : memcpy;
+import shard.math_util : ilog2;
+
 nothrow:
 
-align (8) struct Hash64 {
-    ulong value;
-}
+alias Hash32 = Hash!32;
+alias Hash64 = Hash!64;
 
-Hash64 hash64_of(const(char)[] str) {
-    import std.digest.murmurhash: digest, MurmurHash3;
+struct Hash(size_t N) {
+    enum hash_bytes = N / 8;
 
-    auto v = digest!(MurmurHash3!128)(str);
-    return Hash64(*(cast(ulong*) v.ptr));
-}
+    static if (hash_bytes == 4) {
+        alias IntType = uint;
+        alias Hasher = MurmurHash3!32;
+    }
+    else static if (hash_bytes == 8) {
+        alias IntType = ulong;
+        alias Hasher = MurmurHash3!128;
+    }
+    else static assert(0, "Hash size not supported");
 
-align (4) struct Hash32 {
-    uint value;
-}
+    union {
+        ubyte[hash_bytes] bytes;
+        IntType int_value;
+    }
 
-Hash32 hash32_of(const(char)[] str) {
-    import std.digest.murmurhash: digest, MurmurHash3;
+    this(ubyte[] v) nothrow {
+        bytes[] = v[0 .. bytes.sizeof];
+    }
 
-    auto v = digest!(MurmurHash3!32)(str);
-    return Hash32(*(cast(uint*) v.ptr));
+    this(IntType v) nothrow {
+        int_value = v;
+    }
+
+    static Hash of(const(char)[] str) {
+        return Hash(digest!Hasher(str)[0 .. hash_bytes]);
+    }
+
+    static Hash of(T)(T* p) {
+        enum size_t shift = ilog2(1 + T.sizeof);
+        return (cast(size_t) p) >> shift;
+    }
 }

@@ -252,6 +252,7 @@ T[] make_array(T, A)(auto ref A allocator, size_t length) {
             offset += extent;
         }
     }
+
     return (() @trusted => cast(T[]) m)();
 }
 
