@@ -3,6 +3,7 @@ module shard.hash;
 import std.digest.murmurhash: digest, MurmurHash3;
 import core.stdc.string : memcpy;
 import shard.math_util : ilog2;
+import std.traits : isPointer;
 
 nothrow:
 
@@ -35,12 +36,13 @@ struct Hash(size_t N) {
         int_value = v;
     }
 
-    static Hash of(const(char)[] str) {
+    static Hash of(T : const(char)[])(T str) {
         return Hash(digest!Hasher(str)[0 .. hash_bytes]);
     }
 
-    static Hash of(T)(T* p) {
+    static Hash of(T)(T p) if (isPointer!T) {
         enum size_t shift = ilog2(1 + T.sizeof);
-        return (cast(size_t) p) >> shift;
+        const v8 = (cast(size_t) p) >> shift;
+        return Hash((cast(ubyte*) &v8)[0 .. hash_bytes]);
     }
 }

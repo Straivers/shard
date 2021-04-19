@@ -1,17 +1,16 @@
 module shard.memory.tracker;
 
-import shard.collections.array : UnmanagedArray;
-import shard.handle_pool;
+import shard.collections.hash_map : UnmanagedHashMap32;
+import shard.handle_pool : Handle32, HandlePool;
 import shard.memory.allocator : Allocator;
-import shard.os.time : OsClockApi, TimeStamp;
+import shard.hash : Hash32;
 import std.bitmanip : bitfields;
 
 enum tracked_allocator_handle_name = "shard_memory_tracker_handle";
 alias TrackedAllocatorId = Handle32!tracked_allocator_handle_name;
 
 final class MemoryTracker {
-    this(OsClockApi clock, Allocator sys_allocator) {
-        _clock = clock;
+    this(Allocator sys_allocator) {
         _sys_allocator = sys_allocator;
         _sys_allocator_id = add_allocator(TrackedAllocatorId());
     }
@@ -24,6 +23,7 @@ final class MemoryTracker {
     }
 
     TrackedAllocatorId add_allocator(TrackedAllocatorId parent) {
+        // make sure to initialize AllocatorInfo
         assert(0, "Not Implemented");
     }
 
@@ -32,55 +32,45 @@ final class MemoryTracker {
     }
 
     void record_allocate(TrackedAllocatorId allocator, string type_name, void[] memory) {
-        assert(0, "Not Implemented");
+        auto op = MemoryOp(Hash32.of(type_name), cast(uint) memory.length, cast(size_t) memory.ptr);
+        _allocators.get(allocator).ops.insert(memory.ptr, op, _sys_allocator);
     }
 
-    void record_deallocate(TrackedAllocatorId allocator, string type_name, void[] memory) {
-        assert(0, "Not Implemented");
+    void record_deallocate(TrackedAllocatorId allocator, void[] memory) {
+        _allocators.get(allocator).ops.remove(memory.ptr, _sys_allocator);
     }
 
     void record_reallocate(TrackedAllocatorId allocator, string type_name, void[] old_place, void[] new_place) {
-        assert(0, "Not Implemented");
+        if (old_place.ptr == new_place.ptr)
+            _allocators.get(allocator).ops.get(old_place.ptr).size_1 = cast(uint) new_place.length;
+        else {
+            record_deallocate(allocator, old_place);
+            record_allocate(allocator, type_name, new_place);
+        }
     }
 
 private:
-    OsClockApi _clock;
-
     Allocator _sys_allocator;
     TrackedAllocatorId _sys_allocator_id;
 
-    size_t _free_list_length;
-    AllocatorInfo* _free_list;
+    // Implement freelist for AllocatorInfo, reduce _allocators size
 
     // StringCache _string_cache;
 
     void[512 * size_t.sizeof] _allocator_mem;
-    HandlePool!(AllocatorInfo*, tracked_allocator_handle_name, 512) _allocators;
+    HandlePool!(AllocatorInfo, tracked_allocator_handle_name, 512) _allocators;
 }
 
 private:
 
 struct MemoryOp {
-    enum Kind: ubyte {
-        None = 0,
-        Allocate = 1,
-        Deallocate = 2,
-        Reallocate = 3
-    }
-
-    TimeStamp time;
-    string type_name;
+    Hash32 type_name;
+    uint size_1;
     size_t memory1;
-    size_t memory2;
 
-    mixin(bitfields(
-        Kind, "kind", 2,
-        size_t, "size1", 31,
-        size_t, "size2", 31
-    ));
+    static assert(MemoryOp.sizeof == 16);
 }
 
 struct AllocatorInfo {
-    AllocatorInfo* next_free;
-    UnmanagedArray!MemoryOp ops;
+    UnmanagedHashMap32!(void*, MemoryOp) ops;
 }

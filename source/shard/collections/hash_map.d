@@ -8,7 +8,9 @@ Two versions of `UnmanagedHashMap32` exist. The first maps keys to values, and
 the second maps hashes to values.
 */
 struct UnmanagedHashMap32(Key, Value) {
-    this(Allocator allocator, Hash32 function(ref Key) hasher = &Hash32.of!Key, uint num_buckets = 64) {
+    alias Hasher = Hash32 function(ref Key);
+
+    this(Allocator allocator, Hash32 function(ref Key) hasher, uint num_buckets = 64) {
         _impl = UnmanagedHashMap32!Value(allocator, num_buckets);
         _hasher = hasher;
     }
@@ -36,19 +38,19 @@ struct UnmanagedHashMap32(Key, Value) {
     }
 
     Value try_get(Key key, lazy Value value) {
-        return _impl.get(_hasher(key), value);
+        return _impl.try_get(_hasher(key), value);
     }
 
     bool insert(Key key, Value value, Allocator allocator) in (!contains(key)) {
         return _impl.insert(_hasher(key), value, allocator);
     }
 
-    void remove(Key key) in (contains(key)) {
-        return _impl.remove(_hasher(key));
+    Value remove(Key key, Allocator allocator) in (contains(key)) {
+        return _impl.remove(_hasher(key), allocator);
     }
 
 private:
-    UnManagedHashMap32!Value _impl;
+    UnmanagedHashMap32!Value _impl;
     Hash32 function(ref Key) _hasher;
 }
 
@@ -138,7 +140,7 @@ struct UnmanagedHashMap32(Value) {
         return false;
     }
 
-    void remove(Hash32 hash, Allocator allocator) in (contains(hash)) {
+    Value remove(Hash32 hash, Allocator allocator) in (contains(hash)) {
         void close() {
             _num_entries--;
             if (double(_num_entries) / _buckets.length < 0.25)
@@ -150,9 +152,13 @@ struct UnmanagedHashMap32(Value) {
 
         if (_buckets[bucket_id].hash == hash) {
             auto entry = _buckets[bucket_id];
+            auto value = entry.value;
+
             _buckets[bucket_id] = entry.next;
             allocator.dispose(entry);
             close();
+
+            return value;
         }
         else {
             auto prev = _buckets[bucket_id];
@@ -164,8 +170,11 @@ struct UnmanagedHashMap32(Value) {
 
             assert(curr, "Key not found!");
             prev.next = curr.next;
+
+            auto value = curr.value;
             allocator.dispose(curr);
             close();
+            return value;
         }
     }
 
