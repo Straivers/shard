@@ -23,7 +23,16 @@ struct IAllocator {
         return optimal_size_fn ? optimal_size_fn(instance, size) : round_to_next(size, alignment);
     }
 
-    /// Allocates `size` bytes of memory. Returns `null` if out of memory.
+    /**
+    Allocates `size` bytes of memory. Returns `null` if out of memory.
+
+    Params:
+        size        = The number of bytes to allocate. Must not be 0.
+    
+    Returns:
+        A block of `size` bytes of memory or `null` if out of memory or `size`
+        = 0.
+    */
     void[] allocate(size_t size) nothrow {
         return allocate_fn(instance, size);
     }
@@ -47,6 +56,10 @@ struct IAllocator {
 
     /**
     Attempts to resize `memory`.
+    
+    If `memory` is `null` and `size` > 0, `reallocate()` acts as `allocate()`.
+
+    If `memory` is not `null` and `size` = 0, `reallocate()` acts as `deallocate()`.
 
     Params:
         memory      = The memory block to resize. May be `null`.
@@ -61,36 +74,48 @@ struct IAllocator {
 }
 
 version (unittest) {
-    void test_allocate_api(AllocatorType)(ref AllocatorType allocator) {
-        assert(allocator.allocate(0) == []);
+    void test_allocate_api(ref IAllocator allocator) {
+        auto m1 = allocator.allocate(0);
+        assert(m1 == null);
 
-        auto empty = [];
-        allocator.deallocate(empty);
+        allocator.deallocate(m1); // must not crash
 
-        assert(allocator.optimal_size(0) == 0);
-
-        auto m = allocator.allocate(allocator.optimal_size(1));
-        assert(m);
-        assert(m.length == allocator.optimal_size(1));
-        assert((cast(size_t) m.ptr) % allocator.alignment == 0);
-        allocator.deallocate(m);
-        assert(!m);
-
-        auto m2 = allocator.allocate(7);
-        assert(m2);
-        assert(m2.length == 7);
+        auto m2 = allocator.allocate(8);
+        assert(m2.length == 8);
+        assert(allocator.optimal_size(8) >= 8);
         assert((cast(size_t) m2.ptr) % allocator.alignment == 0);
+
+        auto m3 = allocator.allocate(13);
+        assert(m3.length == 13);
+        assert(allocator.optimal_size(13) >= 13);
+        assert((cast(size_t) m3.ptr) % allocator.alignment == 0);
+
+        auto m4 = allocator.allocate(21);
+        assert(m4.length == 21);
+        assert(allocator.optimal_size(21) >= 21);
+        assert((cast(size_t) m4.ptr) % allocator.alignment == 0);
+
+        allocator.deallocate(m4);
+        assert(m4 == null);
+
+        auto m5 = allocator.allocate(34);
+        assert(m5.length == 34);
+        assert(allocator.optimal_size(34) >= 34);
+        assert((cast(size_t) m5.ptr) % allocator.alignment == 0);
+
         allocator.deallocate(m2);
-        assert(!m2);
+        allocator.deallocate(m3);
+        allocator.deallocate(m4);
+        allocator.deallocate(m5);
     }
 
-    void test_resize_api(AllocatorType)(ref AllocatorType allocator) {
+    void test_resize_api(ref IAllocator allocator) {
         void[] m1;
 
         // Reallocation as allocation
-        allocator.reallocate(m1, allocator.optimal_size(13));
+        allocator.reallocate(m1, 23);
         assert(m1);
-        assert(m1.length == allocator.optimal_size(13));
+        assert(m1.length == 23);
 
         // Reallocation as resize down
         assert(allocator.reallocate(m1, 1));
@@ -105,8 +130,8 @@ version (unittest) {
             m2 = allocator.allocate(20);
 
             // Grow not-most-recent allocation
-            allocator.reallocate(m1, 50);
-            assert(m1.length == 50);
+            allocator.reallocate(m1, 234);
+            assert(m1.length == 234);
 
             // Grow not-most-recent allocation
             allocator.reallocate(m2, 123);

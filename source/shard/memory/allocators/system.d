@@ -30,10 +30,11 @@ struct SystemAllocator {
     }
 
     static void[] allocate(void* dummy, size_t size) nothrow {
-        if (auto m = malloc(size)[0 .. size])
-            return m;
-        else
+        if (size == 0)
             return null;
+
+        auto m = malloc(size);
+        return m ? m[0 .. size] : null;
     }
 
     static void deallocate(void* dummy, void[] block) nothrow {
