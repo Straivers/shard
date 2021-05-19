@@ -6,46 +6,59 @@ import shard.memory.constants: platform_alignment;
 
 import core.stdc.stdlib: malloc, free, realloc;
 
-final class SystemAllocator : Allocator {
-    override size_t alignment() const nothrow {
+struct SystemAllocator {
+    private IAllocator _allocator_api;
+
+    ref IAllocator allocator_api() return nothrow {
+        return _allocator_api;
+    }
+
+    static create() nothrow {
+        return SystemAllocator(IAllocator(
+            null,
+            &alignment,
+            null,
+            &allocate,
+            &deallocate,
+            &reallocate,
+            null
+        ));
+    }
+
+    static size_t alignment(const void* dummy) nothrow {
         return platform_alignment;
     }
 
-    override size_t optimal_size(size_t size) const nothrow {
-        return size;
-    }
-
-    override void[] allocate(size_t size) nothrow {
+    static void[] allocate(void* dummy, size_t size) nothrow {
         if (auto m = malloc(size)[0 .. size])
             return m;
         else
             return null;
     }
 
-    alias deallocate = Allocator.deallocate;
-
-    override void deallocate(ref void[] memory) nothrow {
-        free(memory.ptr);
-        memory = null;
+    static void deallocate(void* dummy, void[] block) nothrow {
+        if (block)
+            free(block.ptr);
     }
 
-    override bool reallocate(ref void[] memory, size_t size) nothrow {
+    static bool reallocate(void* dummy, ref void[] memory, size_t size) nothrow {
+        if (memory && size == 0) {
+            free(memory.ptr);
+            memory = null;
+            return true;
+        }
+
         if (auto p = realloc(memory.ptr, size)) {
             memory = p[0 .. size];
             return true;
         }
-        else
-            return false;
-    }
 
-    override bool resize(ref void[] memory, size_t size) nothrow {
         return false;
     }
 }
 
 unittest {
-    scope sa = new SystemAllocator();
-
-    test_allocate_api(sa);
-    test_resize_api(sa);
+    auto sa = SystemAllocator.create();
+    test_allocate_api(sa.allocator_api());
+    test_resize_api(sa.allocator_api());
 }

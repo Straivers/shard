@@ -4,4 +4,13 @@ authors "David Zhang"
 copyright "Copyright © 2021, David Zhang"
 license "MIT"
 
-dflags "-checkaction=context"
+targetPath "bin"
+
+configuration "library" {
+    buildOptions "betterC"
+}
+
+configuration "unittest" {
+    dependency "silly" version="~>1.1.1"
+    dflags "-checkaction=context"
+}
