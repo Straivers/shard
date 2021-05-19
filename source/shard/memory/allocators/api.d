@@ -55,7 +55,8 @@ struct IAllocator {
     }
 
     /**
-    Attempts to resize `memory`.
+    Attempts to resize `memory`. If `memory.length = size`, this function is a
+    no-op.
     
     If `memory` is `null` and `size` > 0, `reallocate()` acts as `allocate()`.
 
@@ -117,6 +118,11 @@ version (unittest) {
         assert(m1);
         assert(m1.length == 23);
 
+        auto p1 = m1.ptr;
+        allocator.reallocate(m1, 23);
+        assert(m1.length == 23);
+        assert(m1.ptr == p1);
+
         // Reallocation as resize down
         assert(allocator.reallocate(m1, 1));
         assert(m1.length == 1);
@@ -133,9 +139,9 @@ version (unittest) {
             allocator.reallocate(m1, 234);
             assert(m1.length == 234);
 
-            // Grow not-most-recent allocation
-            allocator.reallocate(m2, 123);
-            assert(m2.length == 123);
+            // Shrink not-most-recent allocation
+            allocator.reallocate(m2, 1);
+            assert(m2.length == 1);
 
             allocator.deallocate(m2);
         }

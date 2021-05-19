@@ -7,24 +7,7 @@ import shard.math : round_to_next;
 import shard.memory.allocators.api;
 import shard.memory.constants : platform_alignment;
 
-struct UnmanagedArena {
-
-    static size_t allocator_api_alignment(const void* arena_data) nothrow {
-        return (cast(const UnmanagedArena*) arena_data).alignment();
-    }
-
-    static void[] allocator_api_allocate(void* arena_data, size_t size) nothrow {
-        return (cast(UnmanagedArena*) arena_data).allocate(size);
-    }
-
-    static void allocator_api_deallocate(void* arena_data, void[] block) nothrow {
-        return (cast(UnmanagedArena*) arena_data).deallocate(block);
-    }
-
-    static bool allocator_api_reallocate(void* arena_data, ref void[] block, size_t size) nothrow {
-        return (cast(UnmanagedArena*) arena_data).reallocate(block, size);
-    }
-
+struct Arena {
 public:
     this(void[] memory, size_t alignment = platform_alignment) {
         _allocator_api = IAllocator(
@@ -45,14 +28,26 @@ public:
         _top = _start;
     }
 
+    /// Retrieves a compliant IAllocator interface.
     ref IAllocator allocator_api() return nothrow {
         return _allocator_api;
     }
 
+    /// The minimum alignment for all allocations.
     size_t alignment() const nothrow {
         return _alignment;
     }
 
+    /**
+    Allocates `size` bytes of memory. Returns `null` if out of memory.
+
+    Params:
+        size        = The number of bytes to allocate. Must not be 0.
+    
+    Returns:
+        A block of `size` bytes of memory or `null` if out of memory or `size`
+        = 0.
+    */
     void[] allocate(size_t size) nothrow {
         if (size == 0)
             return null;
@@ -60,6 +55,13 @@ public:
         return raw_allocate(round_to_next(size, _alignment), size);
     }
 
+    /**
+    Returns `memory` to the allocator.
+
+    Params:
+        memory      = A block of memory previously allocated by `allocate()` or
+                      `resize()`.
+    */
     void deallocate(void[] block) nothrow {
         // If this is the last block, deallocate it
         if (block && block.ptr + round_to_next(block.length, _alignment) == _top) {
@@ -67,6 +69,21 @@ public:
         }
     }
 
+    /**
+    Attempts to resize `memory`. If `memory.length = size`, this function is a
+    no-op.
+    
+    If `memory` is `null` and `size` > 0, `reallocate()` acts as `allocate()`.
+
+    If `memory` is not `null` and `size` = 0, `reallocate()` acts as `deallocate()`.
+
+    Params:
+        memory      = The memory block to resize. May be `null`.
+        size        = The size of the memory block after `reallocate()` returns.
+                      May be 0.
+
+    Returns: `true` if `memory` was resized, `false` otherwise.
+    */
     bool reallocate(ref void[] block, size_t size) nothrow {
         const block_size = round_to_next(block.length, _alignment);
         const actual_size = round_to_next(size, _alignment);
@@ -114,6 +131,22 @@ public:
     }
 
 private:
+    static size_t allocator_api_alignment(const void* self) nothrow {
+        return (cast(const Arena*) self).alignment();
+    }
+
+    static void[] allocator_api_allocate(void* self, size_t size) nothrow {
+        return (cast(Arena*) self).allocate(size);
+    }
+
+    static void allocator_api_deallocate(void* self, void[] block) nothrow {
+        return (cast(Arena*) self).deallocate(block);
+    }
+
+    static bool allocator_api_reallocate(void* self, ref void[] block, size_t size) nothrow {
+        return (cast(Arena*) self).reallocate(block, size);
+    }
+
     void[] raw_allocate(size_t aligned_size, size_t final_size) nothrow {
         if (_end - _top < aligned_size)
             return null;
@@ -132,8 +165,9 @@ private:
     void* _end;
 }
 
+@("Arena IAllocator compliance")
 unittest {
-    auto ua = UnmanagedArena(new void[](1024));
+    auto ua = Arena(new void[](1024));
     test_allocate_api(ua.allocator_api());
     test_resize_api(ua.allocator_api());
 }
