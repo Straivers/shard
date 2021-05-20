@@ -6,6 +6,8 @@ import shard.memory.lifetime;
 public import std.typecons : Ternary;
 
 struct IAllocator {
+    @disable this(this);
+
     void* instance;
     size_t function(const void*) nothrow                alignment_fn;
     size_t function(const void*, size_t) nothrow        optimal_size_fn;

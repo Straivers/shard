@@ -2,7 +2,7 @@ module shard.memory.allocators.system;
 
 import shard.math: round_to_next;
 import shard.memory.allocators.api;
-import shard.memory.constants: platform_alignment;
+import shard.memory.values: platform_alignment;
 
 import core.stdc.stdlib: malloc, free, realloc;
 

@@ -215,7 +215,7 @@ private:
 
 unittest {
     import shard.memory.allocators.system : SystemAllocator;
-    import std.random : uniform, randomCover;
+    import std.random : uniform;
     import std.range : iota, lockstep;
 
     SystemAllocator mem;
