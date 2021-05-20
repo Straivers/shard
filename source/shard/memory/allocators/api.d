@@ -28,7 +28,7 @@ struct IAllocator {
 
     Params:
         size        = The number of bytes to allocate. Must not be 0.
-    
+
     Returns:
         A block of `size` bytes of memory or `null` if out of memory or `size`
         = 0.
@@ -71,6 +71,30 @@ struct IAllocator {
     */
     bool reallocate(ref void[] block, size_t size) nothrow {
         return reallocate_fn ? reallocate_fn(instance, block, size) : false;
+    }
+
+    auto make(T, Args...)(auto ref Args args) {
+        return shard.memory.lifetime.make!T(this, args);
+    }
+
+    auto make_array(T)(size_t length) {
+        return shard.memory.lifetime.make_array!T(this, length);
+    }
+
+    void dispose(T)(auto ref T* p) {
+        shard.memory.lifetime.dispose(this, p);
+    }
+
+    void dispose(T)(auto ref T p) if (is(T == class) || is(T == interface)) {
+        shard.memory.lifetime.dispose(this, p);
+    }
+
+    void dispose(T)(auto ref T[] array) {
+        shard.memory.lifetime.dispose(this, array);
+    }
+
+    bool resize_array(T)(ref T[] array, size_t length) nothrow {
+        return shard.memory.lifetime.resize_array(this, array, length);
     }
 }
 

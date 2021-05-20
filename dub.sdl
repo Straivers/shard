@@ -8,6 +8,7 @@ targetPath "bin"
 
 configuration "library" {
     buildOptions "betterC"
+    targetType "library"
 }
 
 configuration "unittest" {

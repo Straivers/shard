@@ -1,8 +1,11 @@
 module shard.memory.lifetime;
 
-import std.traits : hasElaborateDestructor, hasMember, fullyQualifiedName;
-import core.lifetime : emplace;
 import core.checkedint : mulu;
+import core.lifetime : emplace;
+import std.algorithm : max;
+import std.traits : fullyQualifiedName, hasElaborateDestructor, hasMember;
+
+import shard.traits : PtrType, object_size;
 
 PtrType!T make(T, A, Args...)(auto ref A storage, Args args) nothrow {
     // Support 0-size structs
