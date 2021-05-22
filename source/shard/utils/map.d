@@ -1,7 +1,8 @@
 module shard.utils.map;
 
-import shard.memory.allocators.api : IAllocator;
 import shard.hash : Hash32;
+import shard.memory.allocators.api : IAllocator;
+import shard.utils.intrusive_list : intrusive_list;
 
 /**
 Two versions of `UnmanagedHashMap32` exist. The first maps keys to values, and
@@ -57,21 +58,16 @@ private:
 /// Ditto
 struct UnmanagedHashMap32(Value) {
     this(ref IAllocator allocator, uint num_buckets = 64) {
-        _buckets = allocator.make_array!(Node*)(num_buckets);
+        _buckets = allocator.make_array!(Node.ListHead)(num_buckets);
     }
 
     @disable this(this);
 
     void clear(ref IAllocator allocator) {
-        static void free_node(Node* node, ref IAllocator allocator) {
-            if (node) {
-                free_node(node.next, allocator);
-                allocator.dispose(node);
-            }
+        foreach (bucket; _buckets) {
+            while (!bucket.is_empty())
+                allocator.dispose(bucket.pop_front());
         }
-
-        foreach (node; _buckets)
-            free_node(node, allocator);
 
         allocator.dispose(_buckets);
     }
@@ -86,122 +82,77 @@ struct UnmanagedHashMap32(Value) {
 
     bool contains(Hash32 hash) {
         const bucket_id = hash.int_value % _buckets.length;
-        auto e = _buckets[bucket_id];
-        while(e) {
-            if (e.hash == hash)
-                return true;
-            e = e.next;
-        }
-        return false;
+        return _get_bucket(hash, bucket_id) !is null;
     }
 
-    ref Value get(Hash32 hash) in(contains(hash)) {
+    ref Value get(Hash32 hash) {
         const bucket_id = hash.int_value % _buckets.length;
-        auto e = _buckets[bucket_id];
-        while(e) {
-            if (e.hash == hash)
-                return _buckets[bucket_id].value;
-            e = e.next;
-        }
+        if (auto bucket = _get_bucket(hash, bucket_id))
+            return bucket.value;
         assert(0, "Key not found!");
     }
 
     Value try_get(Hash32 hash, lazy Value default_value) {
         const bucket_id = hash.int_value % _buckets.length;
-        auto e = _buckets[bucket_id];
-        while(e) {
-            if (e.hash == hash)
-                return _buckets[bucket_id].value;
-            e = e.next;
-        }
+        if (auto bucket = _get_bucket(hash, bucket_id))
+            return bucket.value;
         return default_value;
     }
 
-    bool insert(Hash32 hash, Value value, ref IAllocator allocator) in (!contains(hash)) {
-        if (double(_num_entries) / _buckets.length > 0.7)
-            _buckets = _rehash(_buckets, allocator.make_array!(Node*)(_buckets.length * 2), allocator);
+    bool insert(Hash32 hash, Value value, ref IAllocator allocator) {
+        if (_num_entries / _buckets.length > 1) {
+            auto new_buckets = allocator.make_array!(Node.ListHead)(_buckets.length * 2);
+            _buckets = _rehash(_buckets, new_buckets, allocator);
+        }
 
         const bucket_id = hash.int_value % _buckets.length;
 
-        if (_buckets[bucket_id] is null) {
-            if (auto n = allocator.make!Node(null, hash, value)) {
-                _buckets[bucket_id] = n;
-                _num_entries++;
+        foreach (node; _buckets[bucket_id][]) {
+            if (node.hash == hash) {
+                node.value = value;
                 return true;
             }
-            return false;
         }
 
-        if (auto n = allocator.make!Node(_buckets[bucket_id], hash, value)) {
-            _buckets[bucket_id] = n;
+        if (auto n = allocator.make!Node(hash, value)) {
+            _buckets[bucket_id].push_back(n);
             _num_entries++;
             return true;
         }
+
         return false;
     }
 
-    Value remove(Hash32 hash, ref IAllocator allocator) in (contains(hash)) {
-        void close() {
-            _num_entries--;
-            if (double(_num_entries) / _buckets.length < 0.25)
-                _buckets = _rehash(_buckets, allocator.make_array!(Node*)(_buckets.length / 2), allocator);
-        }
-
+    Value remove(Hash32 hash, ref IAllocator allocator) {
         const bucket_id = hash.int_value % _buckets.length;
-        assert(_buckets[bucket_id], "Key not found!");
+        auto bucket = _get_bucket(hash, bucket_id);
 
-        if (_buckets[bucket_id].hash == hash) {
-            auto entry = _buckets[bucket_id];
-            auto value = entry.value;
+        if (!bucket)
+            assert(0, "Key not found!");
 
-            _buckets[bucket_id] = entry.next;
-            allocator.dispose(entry);
-            close();
+        _buckets[bucket_id].remove(bucket);        
+        scope (exit) allocator.dispose(bucket);
 
-            return value;
-        }
-        else {
-            auto prev = _buckets[bucket_id];
-            auto curr = prev.next;
-            while (curr && curr.hash != hash) {
-                prev = curr;
-                curr = curr.next;
-            }
+        _num_entries--;
+        if (double(_num_entries) / _buckets.length < 0.25)
+            _buckets = _rehash(_buckets, allocator.make_array!(Node.ListHead)(_buckets.length / 2), allocator);
 
-            assert(curr, "Key not found!");
-            prev.next = curr.next;
-
-            auto value = curr.value;
-            allocator.dispose(curr);
-            close();
-            return value;
-        }
+        return bucket.value;
     }
 
 private:
     struct Node {
-        Node* next;
         Hash32 hash;
         Value value;
+        mixin intrusive_list!Node;
     }
 
-    static Node*[] _rehash(Node*[] old_buckets, Node*[] new_buckets, ref IAllocator allocator) {
+    static Node.ListHead[] _rehash(Node.ListHead[] old_buckets, Node.ListHead[] new_buckets, ref IAllocator allocator) {
         foreach (bucket; old_buckets) {
-            auto entry = bucket;
-            while (entry) {
+            while (!bucket.is_empty) {
+                auto entry = bucket.pop_front();
                 const new_id = entry.hash.int_value % new_buckets.length;
-                auto next = entry.next;
-
-                if (new_buckets[new_id] is null) {
-                    entry.next = null;
-                    new_buckets[new_id] = entry;
-                }
-                else {
-                    entry.next = new_buckets[new_id];
-                    new_buckets[new_id] = entry;
-                }
-
-                entry = next;
+                new_buckets[new_id].push_back(entry);
             }
         }
 
@@ -209,8 +160,16 @@ private:
         return new_buckets;
     }
 
+    Node* _get_bucket(Hash32 hash, size_t bucket_id) {
+        foreach (bucket; _buckets[bucket_id][]) {
+            if (bucket.hash == hash)
+                return bucket;
+        }
+        return null;
+    }
+
     uint _num_entries;
-    Node*[] _buckets;
+    Node.ListHead[] _buckets;
 }
 
 unittest {
