@@ -1,0 +1,7 @@
+name "tester"
+description "A minimal D application."
+authors "David"
+copyright "Copyright © 2021, David"
+license "proprietary"
+
+dependency "shard" path="../"

@@ -1,0 +1,7 @@
+{
+	"fileVersion": 1,
+	"versions": {
+		"shard": {"path":"../"},
+		"silly": "1.1.1"
+	}
+}
