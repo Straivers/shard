@@ -42,28 +42,9 @@ T[] make_array(T, A)(auto ref A storage, size_t length) nothrow {
 
     // g_mem_tracker.record_allocate(storage, fullyQualifiedName!T, m);
 
-    assert(m.length > 0);
-
-    static if (__traits(isZeroInit, T)) {
-        memset(m.ptr, 0, m.length);
-    }
-    else static if (T.sizeof == 1) {
-        T t = T.init;
-        memset(m.ptr, *(cast(ubyte*) &t), m.length);
-    }
-    else {
-        T t = T.init;
-        memcpy(m.ptr, &t, T.sizeof);
-
-        // Copy exponentially
-        for (size_t offset = T.sizeof; offset < m.length; ) {
-            auto extent = min(offset, m.length - offset);
-            memcpy(m.ptr + offset, m.ptr, extent);
-            offset += extent;
-        }
-    }
-
-    return (() @trusted => cast(T[]) m)();
+    auto t_array = (() @trusted => cast(T[]) m)();
+    t_array[] = T.init;
+    return t_array;
 }
 
 void dispose(T, A)(auto ref A storage, auto ref T* p) nothrow {

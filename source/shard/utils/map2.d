@@ -66,6 +66,7 @@ private:
         Key key;
         Value value;
 
+        pragma(inline, true)
         static hash(ref Pair pair) {
             return key_hasher(pair.key);
         }
@@ -107,11 +108,11 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
     }
 
     void reset(ref IAllocator allocator) {
-        foreach (ref slot; _table.slots) {
-            if (slot.has_value())
-                destroy(slot.value);
+        foreach (i, ref value; _table.values) {
+            if (_table.has_value(i))
+                destroy(value);
         }
-        allocator.dispose(_table.slots);
+        Table.dispose(_table, allocator);
         _table = Table();
     }
 
@@ -137,25 +138,12 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
 
     // private:
     enum smallest_size = 8;
-    enum min_distance = 4;
-
-    struct Slot {
-        Value value;
-        byte distance = -1;
-
-        bool has_value() {
-            return distance >= 0;
-        }
-
-        bool is_empty() {
-            return distance == -1;
-        }
-    }
 
     struct Table {
         /// The slots for values in the table. The length of the table is
         /// `max_entries + max_distance` to simplify code for insert().
-        Slot[] slots;
+        Value[] values;
+        byte[] distances;
 
         /// The maximum number of slots a value can be from the optimum.
         size_t max_distance;
@@ -168,25 +156,36 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
         /// The number of values in the table.
         size_t num_entries;
 
-        alias slots this;
-
         /// Creates a new table with `capacity + ilog2(capacity)` slots. The
         /// extra slots enable search loops to avoid bounds checking by
         /// nature of `index_of`, which provides an index only to `capacity`.
         static bool create(size_t capacity, ref IAllocator allocator, out Table table) {
-            const max_distance = max(min_distance, ilog2(capacity));
+            const max_distance = ilog2(capacity);
             const real_capacity = (capacity + max_distance);
             const max_entries = cast(size_t)(real_capacity * max_load_factor);
 
-            if (auto slots = allocator.make_array!Slot(real_capacity)) {
-                table = Table(slots, max_distance, max_entries, capacity, 0);
-                return true;
-            }
-            return false;
+            auto values = allocator.make_array!Value(real_capacity);
+            if (!values)
+                return false;
+            
+            auto distances = allocator.make_array!byte(real_capacity);
+            if (!distances)
+                return false;
+            distances[] = -1;
+
+            table.values = values;
+            table.distances = distances;
+            table.max_distance = max_distance;
+            table.max_entries = max_entries;
+            table.created_capacity = capacity;
+            table.num_entries = 0;
+
+            return true;
         }
 
         static void dispose(ref Table table, ref IAllocator allocator) {
-            allocator.dispose(table.slots);
+            allocator.dispose(table.values);
+            allocator.dispose(table.distances);
             table = Table();
         }
 
@@ -196,6 +195,14 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
 
             assert(is_power_of_two(created_capacity));
             return (hash.int_value * multiple) & (created_capacity - 1);
+        }
+
+        pragma(inline, true) bool has_value(size_t index) {
+            return distances[index] >= 0;
+        }
+
+        pragma(inline, true) bool is_empty(size_t index) {
+            return distances[index] == -1;
         }
     }
 
@@ -207,38 +214,38 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
         const index = table.index_of(key);
 
         byte distance = 0;
-        auto insert_point = &table[index];
-        for (; insert_point.distance >= distance; distance++, insert_point++) {
-            if (value_hasher(insert_point.value) == key) {
-                swap(insert_point.value, value);
+        size_t insert_point = index;
+        for (; table.distances[insert_point] >= distance; distance++, insert_point++) {
+            if (value_hasher(table.values[insert_point]) == key) {
+                swap(table.values[insert_point], value);
                 destroy(value);
                 return true;
             }
         }
 
-        if (insert_point.is_empty()) {
-            insert_point.value = move(value);
-            insert_point.distance = distance;
+        if (table.is_empty(insert_point)) {
+            table.values[insert_point] = move(value);
+            table.distances[insert_point] = distance;
             table.num_entries++;
             return true;
         }
 
         auto swap_value = move(value);
-        swap(insert_point.value, swap_value);
-        swap(insert_point.distance, distance);
+        swap(table.values[insert_point], swap_value);
+        swap(table.distances[insert_point], distance);
 
         distance++;
         insert_point++;
         while (true) {
-            if (insert_point.is_empty()) {
-                insert_point.distance = distance;
-                insert_point.value = move(swap_value);
+            if (table.is_empty(insert_point)) {
+                table.distances[insert_point] = distance;
+                table.values[insert_point] = move(swap_value);
                 table.num_entries++;
                 return true;
             }
-            else if (insert_point.distance < distance) {
-                swap(insert_point.value, swap_value);
-                swap(insert_point.distance, distance);
+            else if (table.distances[insert_point] < distance) {
+                swap(table.values[insert_point], swap_value);
+                swap(table.distances[insert_point], distance);
                 distance++;
             }
             else {
@@ -262,11 +269,11 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
         if (!Table.create(capacity, allocator, new_table))
             return false;
 
-        foreach (ref slot; table.slots) {
-            if (slot.has_value) {
-                _insert(new_table, value_hasher(slot.value), slot.value, allocator);
+        foreach (i, ref value; table.values) {
+            if (table.has_value(i)) {
+                _insert(new_table, value_hasher(value), value, allocator);
                 // call to destructor here is necessary for ref-counted resources
-                destroy(slot.value);
+                destroy(value);
             }
         }
 
@@ -291,8 +298,16 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
     // Colliding slots are correctly inserted past `table.created_capacity`
     assert(set._table.created_capacity == 8);
     assert(set._table.max_distance == 3);
-    assert(set._table.slots[7] == set.Slot(100, 0));
-    assert(set._table.slots[8] == set.Slot(200, 1));
-    assert(set._table.slots[9] == set.Slot(300, 2));
-    assert(set._table.slots[10] == set.Slot(400, 3));
+
+    assert(set._table.values[7] == 100);
+    assert(set._table.distances[7] == 0);
+    
+    assert(set._table.values[8] == 200);
+    assert(set._table.distances[8] == 1);
+    
+    assert(set._table.values[9] == 300);
+    assert(set._table.distances[9] == 2);
+    
+    assert(set._table.values[10] == 400);
+    assert(set._table.distances[10] == 3);
 }

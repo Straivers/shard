@@ -40,24 +40,29 @@ struct Hash(size_t N : 32) {
         int_value = v;
     }
 
+    pragma(inline, true)
     static Hash of(T : Hash)(T hash) {
-        return Hash(hash.int_value);
+        return hash;
     }
 
+    pragma(inline, true)
     static Hash of(T : const(char)[])(T str) {
         return Hash(digest!Hasher(str)[0 .. hash_bytes]);
     }
 
+    pragma(inline, true)
     static Hash of(T)(T p) if (isPointer!T) {
         enum size_t shift = ilog2(1 + T.sizeof);
         const v8 = (cast(size_t) p) >> shift;
         return Hash((cast(ubyte*) &v8)[0 .. hash_bytes]);
     }
 
+    pragma(inline, true)
     static Hash of(T)(T i) if (isIntegral!T) {
         return Hash(cast(IntType) i);
     }
 
+    pragma(inline, true)
     static Hash of(T)(auto ref T t) if (hasMember!(T, "hash_of")) {
         return t.hash_of();
     }
