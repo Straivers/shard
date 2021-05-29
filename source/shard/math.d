@@ -1,5 +1,7 @@
 module shard.math;
 
+import std.traits: isIntegral;
+
 /**
  Returns the integer log for `i`. Rounds up towards infinity.
  */
@@ -13,4 +15,15 @@ T round_to_next(T)(T value, T base) nothrow {
     const rem = value % base;
     assert(value + (base - rem) > value, "Overflow error on rounding.");
     return rem ? value + (base - rem) : value;
+}
+
+pragma(inline, true) bool is_power_of_two(size_t n) nothrow {
+    return (n != 0) & ((n & (n - 1)) == 0);
+}
+
+@("is_power_of_two(size_t)")
+unittest {
+    assert(is_power_of_two(1));
+    assert(is_power_of_two(1 << 20));
+    assert(!is_power_of_two(0));
 }

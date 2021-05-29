@@ -2,7 +2,7 @@ module shard.memory.lifetime;
 
 import core.checkedint : mulu;
 import core.lifetime : emplace;
-import std.algorithm : max;
+import std.algorithm : max, min;
 import std.traits : fullyQualifiedName, hasElaborateDestructor, hasMember;
 
 import shard.traits : PtrType, object_size;
