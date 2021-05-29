@@ -117,15 +117,15 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
     }
 
     bool contains(hash_t key) {
-        assert(0, "Not implemented");
+        return get(key) !is null;
     }
 
     bool insert(hash_t key, Value value, ref IAllocator allocator) {
-        return _insert(_table, key, value, allocator);
+        return _insert(&_table, key, value, allocator);
     }
 
     bool insert(hash_t key, ref Value value, ref IAllocator allocator) {
-        return _insert(_table, key, value, allocator);
+        return _insert(&_table, key, value, allocator);
     }
 
     void remove(hash_t key, ref IAllocator allocator) {
@@ -133,7 +133,15 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
     }
 
     Value* get(hash_t key) {
-        assert(0, "Not implemented");
+        auto index = _table.index_of(key);
+        auto distance = 0;
+
+        for (; _table.distances[index] >= distance; distance++, index++) {
+            if (key == value_hasher(_table.values[index]))
+                return &_table.values[index];
+        }
+
+        return null;
     }
 
     // private:
@@ -155,6 +163,8 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
 
         /// The number of values in the table.
         size_t num_entries;
+
+        @disable this(this);
 
         /// Creates a new table with `capacity + ilog2(capacity)` slots. The
         /// extra slots enable search loops to avoid bounds checking by
@@ -208,7 +218,7 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
         }
     }
 
-    static bool _insert(ref Table table, hash_t key, ref Value value, ref IAllocator allocator) {
+    static bool _insert(Table* table, hash_t key, ref Value value, ref IAllocator allocator) {
         if (table.num_entries == table.max_entries && !_grow(table, allocator)) {
             return false;
         }
@@ -223,6 +233,12 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
                 destroy(value);
                 return true;
             }
+        }
+
+        if (distance == table.max_distance) {
+            if (_grow(table, allocator))
+                return _insert(table, key, value, allocator);
+            return false;
         }
 
         if (table.is_empty(insert_point)) {
@@ -261,25 +277,25 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
         return true;
     }
 
-    static bool _grow(ref Table table, ref IAllocator allocator) {
+    static bool _grow(Table* table, ref IAllocator allocator) {
         return _rehash(table, max(smallest_size, table.created_capacity * 2), allocator);
     }
 
-    static bool _rehash(ref Table table, size_t capacity, ref IAllocator allocator) {
+    static bool _rehash(Table* table, size_t capacity, ref IAllocator allocator) {
         Table new_table;
         if (!Table.create(capacity, allocator, new_table))
             return false;
 
         foreach (i, distance; table.distances) {
             if (distance >= 0) {
-                _insert(new_table, value_hasher(table.values[i]), table.values[i], allocator);
+                _insert(&new_table, value_hasher(table.values[i]), table.values[i], allocator);
 
                 static if (hasElaborateDestructor!Value)
                     destroy(table.values[i]);
             }
         }
 
-        swap(table, new_table);
+        swap(*table, new_table);
         Table.dispose(new_table, allocator);
         return true;
     }

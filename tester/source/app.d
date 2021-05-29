@@ -37,7 +37,7 @@ void test(Map)(ref Map map) {
 
     alias Unit = void[0];
     Unit[Hash32] hashes;
-    while (hashes.length < 1_000_000)
+    while (hashes.length < 2_000_000)
         hashes[Hash32(uniform(0, uint.max))] = Unit.init;
 
     assert(map.is_empty());
@@ -49,8 +49,8 @@ void test(Map)(ref Map map) {
 
     foreach (i, v; lockstep(iota(hashes.length), hashes.byKey)) {
         map.insert(v, cast(uint) i, mem.allocator_api());
-        // assert(map.contains(v));
-        // assert(*map.get(v) == i);
+        assert(map.contains(v));
+        assert(*map.get(v) == i);
         // assert(map.size() == i + 1);
     }
 
@@ -74,5 +74,5 @@ void test(Map)(ref Map map) {
     writeln("Total time: ", total_time);
     gt.stop();
 
-    assert(map.size() == 0);
+    // assert(map.size() == 0);
 }
