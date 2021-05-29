@@ -5,7 +5,7 @@ import shard.hash : Hash, is_hash;
 import shard.math : ilog2, is_power_of_two;
 import shard.memory.allocators.api : IAllocator;
 import std.algorithm : max, move, swap;
-import std.traits : ReturnType;
+import std.traits : ReturnType, hasElaborateDestructor;
 
 /**
 A normal Key-Value hash table with configurable hasher.
@@ -164,11 +164,11 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
             const real_capacity = (capacity + max_distance);
             const max_entries = cast(size_t)(real_capacity * max_load_factor);
 
-            auto values = allocator.make_array!Value(real_capacity);
+            auto values = allocator.make_raw_array!Value(real_capacity);
             if (!values)
                 return false;
             
-            auto distances = allocator.make_array!byte(real_capacity);
+            auto distances = allocator.make_raw_array!byte(real_capacity);
             if (!distances)
                 return false;
             distances[] = -1;
@@ -197,11 +197,13 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
             return (hash.int_value * multiple) & (created_capacity - 1);
         }
 
-        pragma(inline, true) bool has_value(size_t index) {
+        pragma(inline, true)
+        bool has_value(size_t index) {
             return distances[index] >= 0;
         }
 
-        pragma(inline, true) bool is_empty(size_t index) {
+        pragma(inline, true)
+        bool is_empty(size_t index) {
             return distances[index] == -1;
         }
     }
@@ -236,14 +238,8 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
 
         distance++;
         insert_point++;
-        while (true) {
-            if (table.is_empty(insert_point)) {
-                table.distances[insert_point] = distance;
-                table.values[insert_point] = move(swap_value);
-                table.num_entries++;
-                return true;
-            }
-            else if (table.distances[insert_point] < distance) {
+        while (!table.is_empty(insert_point)) {
+            if (table.distances[insert_point] < distance) {
                 swap(table.values[insert_point], swap_value);
                 swap(table.distances[insert_point], distance);
                 distance++;
@@ -258,6 +254,11 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
                 }
             }
         }
+
+        table.distances[insert_point] = distance;
+        table.values[insert_point] = move(swap_value);
+        table.num_entries++;
+        return true;
     }
 
     static bool _grow(ref Table table, ref IAllocator allocator) {
@@ -269,11 +270,12 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
         if (!Table.create(capacity, allocator, new_table))
             return false;
 
-        foreach (i, ref value; table.values) {
-            if (table.has_value(i)) {
-                _insert(new_table, value_hasher(value), value, allocator);
-                // call to destructor here is necessary for ref-counted resources
-                destroy(value);
+        foreach (i, distance; table.distances) {
+            if (distance >= 0) {
+                _insert(new_table, value_hasher(table.values[i]), table.values[i], allocator);
+
+                static if (hasElaborateDestructor!Value)
+                    destroy(table.values[i]);
             }
         }
 

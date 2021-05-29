@@ -25,8 +25,12 @@ PtrType!T make(T, A, Args...)(auto ref A storage, Args args) nothrow {
 }
 
 T[] make_array(T, A)(auto ref A storage, size_t length) nothrow {
-    import core.stdc.string : memcpy, memset;
+    auto t_array = make_raw_array!T(storage, length);
+    t_array[] = T.init;
+    return t_array;
+}
 
+T[] make_raw_array(T, A)(auto ref A storage, size_t length) nothrow {
     if (!length)
         return null;
 
@@ -42,9 +46,7 @@ T[] make_array(T, A)(auto ref A storage, size_t length) nothrow {
 
     // g_mem_tracker.record_allocate(storage, fullyQualifiedName!T, m);
 
-    auto t_array = (() @trusted => cast(T[]) m)();
-    t_array[] = T.init;
-    return t_array;
+    return (() @trusted => cast(T[]) m)();
 }
 
 void dispose(T, A)(auto ref A storage, auto ref T* p) nothrow {

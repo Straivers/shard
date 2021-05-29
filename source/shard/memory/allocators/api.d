@@ -83,6 +83,10 @@ struct IAllocator {
         return shard.memory.lifetime.make_array!T(this, length);
     }
 
+    auto make_raw_array(T)(size_t length) {
+        return shard.memory.lifetime.make_raw_array!T(this, length);
+    }
+
     void dispose(T)(auto ref T* p) {
         shard.memory.lifetime.dispose(this, p);
     }
