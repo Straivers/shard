@@ -99,6 +99,8 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
 
     static assert(is_hash!hash_t, "value_hasher() must return a hash type!");
 
+    @disable this(this);
+
     size_t size() {
         return _table.num_entries;
     }
@@ -172,7 +174,7 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
         static bool create(size_t capacity, ref IAllocator allocator, out Table table) {
             const max_distance = ilog2(capacity);
             const real_capacity = (capacity + max_distance);
-            const max_entries = cast(size_t)(real_capacity * max_load_factor);
+            const max_entries = cast(size_t)(capacity * max_load_factor);
 
             auto values = allocator.make_raw_array!Value(real_capacity);
             if (!values)
@@ -201,7 +203,7 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
 
         size_t index_of(hash_t hash) {
             // 2 ^ 64 / golden_ratio, rounded up to nearest odd
-            enum size_t multiple = 11400714819323198485;
+            enum size_t multiple = 114_00_714_819_323_198_485;
 
             assert(is_power_of_two(created_capacity));
             return (hash.int_value * multiple) & (created_capacity - 1);
@@ -223,14 +225,15 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
             return false;
         }
 
-        const index = table.index_of(key);
-
         byte distance = 0;
-        size_t insert_point = index;
+        size_t insert_point = table.index_of(key);
         for (; table.distances[insert_point] >= distance; distance++, insert_point++) {
             if (value_hasher(table.values[insert_point]) == key) {
                 swap(table.values[insert_point], value);
-                destroy(value);
+
+                static if (hasElaborateDestructor!Value)
+                    destroy(value);
+
                 return true;
             }
         }
@@ -260,14 +263,15 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
                 swap(table.distances[insert_point], distance);
                 distance++;
             }
+            else if (distance == table.max_distance) {
+                if (!_grow(table, allocator))
+                    return false;
+                else
+                    return _insert(table, value_hasher(swap_value), swap_value, allocator);
+            }
             else {
                 distance++;
-                if (distance == table.max_distance) {
-                    if (!_grow(table, allocator))
-                        return false;
-                    else
-                        return _insert(table, value_hasher(swap_value), swap_value, allocator);
-                }
+                insert_point++;
             }
         }
 
@@ -296,7 +300,10 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
         }
 
         swap(*table, new_table);
-        Table.dispose(new_table, allocator);
+
+        if (new_table.values)
+            Table.dispose(new_table, allocator);
+
         return true;
     }
 

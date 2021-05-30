@@ -12,7 +12,7 @@ public:
     ref IAllocator allocator_api() return nothrow {
         if (_allocator_api == IAllocator())
             _allocator_api = IAllocator(
-                null,
+                &this,
                 &allocator_api_alignment,
                 null,
                 &allocator_api_allocate,
