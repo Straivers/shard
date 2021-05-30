@@ -1,11 +1,11 @@
 module shard.utils.map2;
 
-import core.lifetime : core_emplace = emplace;
 import shard.hash : Hash, is_hash;
 import shard.math : ilog2, is_power_of_two;
 import shard.memory.allocators.api : IAllocator;
+import shard.utils.optional : Optional, some, no, none;
 import std.algorithm : max, move, swap;
-import std.traits : ReturnType, hasElaborateDestructor;
+import std.traits : hasElaborateDestructor, ReturnType;
 
 /**
 A normal Key-Value hash table with configurable hasher.
@@ -24,12 +24,7 @@ Note:
     HashTable!(Hash32, size_t) map;
     ```
 */
-struct HashTable(Key, Value, size_t hash_bits = 32, alias key_hasher = Hash!hash_bits.of!Key) {
-    alias hash_t = ReturnType!key_hasher;
-    static assert(is(hash_t == Hash!hash_bits),
-            "key_hasher() must return a of " ~ Hash!hash_bits.stringof ~ " not " ~ (hash_t)
-            .stringof);
-
+struct HashTable(Key, Value, alias key_hasher = Hash!32.of!Key) {
     size_t size() {
         return _impl.size();
     }
@@ -55,7 +50,7 @@ struct HashTable(Key, Value, size_t hash_bits = 32, alias key_hasher = Hash!hash
         _impl.remove(key_hasher(key), allocator);
     }
 
-    Value* get(Key key) {
+    Optional!(Value*) get(Key key) {
         if (auto pair = _impl.get(key_hasher(key)))
             return &pair.value;
         return null;
@@ -66,8 +61,7 @@ private:
         Key key;
         Value value;
 
-        pragma(inline, true)
-        static hash(ref Pair pair) {
+        pragma(inline, true) static hash(ref Pair pair) {
             return key_hasher(pair.key);
         }
     }
@@ -110,16 +104,19 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
     }
 
     void reset(ref IAllocator allocator) {
-        foreach (i, ref value; _table.values) {
-            if (_table.has_value(i))
-                destroy(value);
+        static if (hasElaborateDestructor!Value) {
+            foreach (i, ref value; _table.values) {
+                if (_table.has_value(i))
+                    destroy(value);
+            }
         }
+
         Table.dispose(_table, allocator);
         _table = Table();
     }
 
     bool contains(hash_t key) {
-        return get(key) !is null;
+        return get(key) != none;
     }
 
     bool insert(hash_t key, Value value, ref IAllocator allocator) {
@@ -131,19 +128,41 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
     }
 
     void remove(hash_t key, ref IAllocator allocator) {
-        assert(0, "Not implemented");
+        auto value_opt = get(key);
+        if (value_opt == none)
+            return;
+
+        auto value = value_opt.front();
+
+        auto index = value - _table.values.ptr;
+        auto next = index + 1;
+
+        _table.distances[index] = -1;
+        static if (hasElaborateDestructor!Value)
+            destroy(value);
+
+        for (; _table.distances[next] > 0; index++, next++) {
+            _table.values[index] = move(_table.values[next]);
+            _table.distances[index] = cast(byte)(_table.distances[next] - 1);
+
+            static if (hasElaborateDestructor!Value)
+                destroy(_table.values[next]);
+            _table.distances[next] = -1;
+        }
+
+        _table.num_entries--;
     }
 
-    Value* get(hash_t key) {
+    Optional!(Value*) get(hash_t key) {
         auto index = _table.index_of(key);
         auto distance = 0;
 
         for (; _table.distances[index] >= distance; distance++, index++) {
             if (key == value_hasher(_table.values[index]))
-                return &_table.values[index];
+                return some(&_table.values[index]);
         }
 
-        return null;
+        return no!(Value*);
     }
 
     // private:
@@ -179,7 +198,7 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
             auto values = allocator.make_raw_array!Value(real_capacity);
             if (!values)
                 return false;
-            
+
             auto distances = allocator.make_raw_array!byte(real_capacity);
             if (!distances)
                 return false;
@@ -209,13 +228,11 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
             return (hash.int_value * multiple) & (created_capacity - 1);
         }
 
-        pragma(inline, true)
-        bool has_value(size_t index) {
+        pragma(inline, true) bool has_value(size_t index) {
             return distances[index] >= 0;
         }
 
-        pragma(inline, true)
-        bool is_empty(size_t index) {
+        pragma(inline, true) bool is_empty(size_t index) {
             return distances[index] == -1;
         }
     }
@@ -227,6 +244,7 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
 
         byte distance = 0;
         size_t insert_point = table.index_of(key);
+        // import std.stdio; writeln(table.values.length, ":", insert_point);
         for (; table.distances[insert_point] >= distance; distance++, insert_point++) {
             if (value_hasher(table.values[insert_point]) == key) {
                 swap(table.values[insert_point], value);
@@ -258,16 +276,15 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
         distance++;
         insert_point++;
         for (; !table.is_empty(insert_point); distance++, insert_point++) {
-            if (distance > table.max_distance) {
+            if (table.distances[insert_point] < distance) {
+                swap(table.values[insert_point], swap_value);
+                swap(table.distances[insert_point], distance);
+            }
+            else if (distance == table.max_distance) {
                 if (!_grow(table, allocator))
                     return false;
                 else
                     return _insert(table, value_hasher(swap_value), swap_value, allocator);
-            }
-
-            if (table.distances[insert_point] < distance) {
-                swap(table.values[insert_point], swap_value);
-                swap(table.distances[insert_point], distance);
             }
         }
 
@@ -309,8 +326,9 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
 @("HashSet: colliding inserts") unittest {
     import shard.memory.allocators.system : SystemAllocator;
 
-    HashSet!int set;
     SystemAllocator mem;
+    HashSet!int set;
+
     set.insert(Hash!32(3), 100, mem.allocator_api);
     set.insert(Hash!32(11), 200, mem.allocator_api);
     set.insert(Hash!32(19), 300, mem.allocator_api);
@@ -322,13 +340,13 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
 
     assert(set._table.values[7] == 100);
     assert(set._table.distances[7] == 0);
-    
+
     assert(set._table.values[8] == 200);
     assert(set._table.distances[8] == 1);
-    
+
     assert(set._table.values[9] == 300);
     assert(set._table.distances[9] == 2);
-    
+
     assert(set._table.values[10] == 400);
     assert(set._table.distances[10] == 3);
 }
@@ -337,19 +355,45 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
     import shard.memory.allocators.system : SystemAllocator;
     import std.random : uniform;
 
-    HashSet!(Hash!32) set;
     SystemAllocator mem;
+    HashSet!(Hash!32) set;
 
     alias Unit = void[0];
     Unit[Hash!32] hashes;
     while (hashes.length < 1_000)
         hashes[Hash!32(uniform(0, uint.max))] = Unit.init;
-    
+
     foreach (v; hashes.byKey)
         set.insert(v, v, mem.allocator_api());
-    
+
     foreach (v; hashes.byKey) {
         assert(set.contains(v));
         assert(*set.get(v) == v);
     }
+}
+
+@("HashSet: insert(), remove()") unittest {
+    import shard.memory.allocators.system : SystemAllocator;
+    import std.random : uniform;
+
+    SystemAllocator mem;
+    HashSet!(Hash!32) set;
+
+    alias Unit = void[0];
+    Unit[Hash!32] hashes;
+    while (hashes.length < 1_000)
+        hashes[Hash!32(uniform(0, uint.max))] = Unit.init;
+
+    foreach (v; hashes.byKey)
+        set.insert(v, v, mem.allocator_api());
+
+    assert(set.size() == 1_000);
+
+    foreach (v; hashes.byKey)
+        set.remove(v, mem.allocator_api());
+
+    foreach (v; hashes.byKey)
+        assert(!set.contains(v));
+
+    assert(set.size() == 0);
 }

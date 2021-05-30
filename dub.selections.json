@@ -1,7 +1,11 @@
 {
 	"fileVersion": 1,
 	"versions": {
+		"bolts": "1.3.1",
+		"optional": "1.2.1",
 		"silly": "1.1.1",
-		"unit-threaded": "1.0.15"
+		"stdx-allocator": "2.77.5",
+		"unit-threaded": "1.0.15",
+		"vibe-d": "0.9.3"
 	}
 }
