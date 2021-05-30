@@ -238,7 +238,7 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
             }
         }
 
-        if (distance == table.max_distance) {
+        if (distance > table.max_distance) {
             if (_grow(table, allocator))
                 return _insert(table, key, value, allocator);
             return false;
@@ -257,22 +257,17 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
 
         distance++;
         insert_point++;
-        while (!table.is_empty(insert_point)) {
-            if (table.distances[insert_point] < distance) {
-                swap(table.values[insert_point], swap_value);
-                swap(table.distances[insert_point], distance);
-                distance++;
-                insert_point++;
-            }
-            else if (distance == table.max_distance) {
+        for (; !table.is_empty(insert_point); distance++, insert_point++) {
+            if (distance > table.max_distance) {
                 if (!_grow(table, allocator))
                     return false;
                 else
                     return _insert(table, value_hasher(swap_value), swap_value, allocator);
             }
-            else {
-                distance++;
-                insert_point++;
+
+            if (table.distances[insert_point] < distance) {
+                swap(table.values[insert_point], swap_value);
+                swap(table.distances[insert_point], distance);
             }
         }
 
@@ -336,4 +331,25 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
     
     assert(set._table.values[10] == 400);
     assert(set._table.distances[10] == 3);
+}
+
+@("HashSet: insert(), contains(), and get()") unittest {
+    import shard.memory.allocators.system : SystemAllocator;
+    import std.random : uniform;
+
+    HashSet!(Hash!32) set;
+    SystemAllocator mem;
+
+    alias Unit = void[0];
+    Unit[Hash!32] hashes;
+    while (hashes.length < 1_000)
+        hashes[Hash!32(uniform(0, uint.max))] = Unit.init;
+    
+    foreach (v; hashes.byKey)
+        set.insert(v, v, mem.allocator_api());
+    
+    foreach (v; hashes.byKey) {
+        assert(set.contains(v));
+        assert(*set.get(v) == v);
+    }
 }
