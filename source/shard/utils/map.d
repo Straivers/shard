@@ -1,295 +1,437 @@
 module shard.utils.map;
 
-import shard.hash : Hash32;
+import shard.hash : Hash, is_hash;
+import shard.math : ilog2, is_power_of_two;
 import shard.memory.allocators.api : IAllocator;
-import shard.utils.array : UnmanagedArray;
-import shard.utils.intrusive_list : intrusive_list;
-import core.stdc.string: memmove;
+import shard.utils.optional : Optional, some, no, none, match;
+import std.algorithm : max, move, swap;
+import std.traits : hasElaborateDestructor, ReturnType;
 
 /**
-Two versions of `UnmanagedHashMap32` exist. The first maps keys to values, and
-the second maps hashes to values.
+A normal Key-Value hash table with configurable hasher.
+
+Params:
+    Key = The value used to index the table.
+    Value = The type containing data within the table.
+    key_hasher = A callable that produces a hash from a key.
+
+Note:
+    If using `HashN.of` functions for hasher, make sure to instantiate the
+    type!
+
+    e.g.
+    ```
+    HashTable!(Hash32, size_t) map;
+    ```
 */
-struct UnmanagedHashMap32(Key, Value) {
-    alias Hasher = Hash32 function(ref Key);
-
-    this(ref IAllocator allocator, Hash32 function(ref Key) hasher, uint num_buckets = 64) {
-        _impl = UnmanagedHashMap32!Value(allocator, num_buckets);
-        _hasher = hasher;
-    }
-
-    @disable this(this);
-
-    void clear(ref IAllocator allocator) {
-        return _impl.clear(allocator);
+struct HashMap(Key, Value, alias key_hasher = Hash!32.of!Key) {
+    size_t size() {
+        return _impl.size();
     }
 
     bool is_empty() {
         return _impl.is_empty();
     }
 
-    size_t size() {
-        return _impl.size();
-    }
-
     bool contains(Key key) {
-        return _impl.contains(_hasher(key));
+        return _impl.contains(key_hasher(key));
     }
 
-    ref Value get(Key key) in (contains(key)) {
-        return _impl.get(_hasher(key));
+    void insert(Key key, ref Value value, ref IAllocator allocator) {
+        auto pair = Pair(key, move(value));
+        _impl.insert(key_hasher(key), pair, allocator);
     }
 
-    Value try_get(Key key, lazy Value value) {
-        return _impl.try_get(_hasher(key), value);
+    void insert(Key key, Value value, ref IAllocator allocator) {
+        _impl.insert(key_hasher(key), Pair(key, value), allocator);
     }
 
-    bool insert(Key key, Value value, ref IAllocator allocator) in (!contains(key)) {
-        return _impl.insert(_hasher(key), value, allocator);
+    void remove(Key key, ref IAllocator allocator) {
+        _impl.remove(key_hasher(key), allocator);
     }
 
-    Value remove(Key key, ref IAllocator allocator) in (contains(key)) {
-        return _impl.remove(_hasher(key), allocator);
-    }
-
-private:
-    UnmanagedHashMap32!Value _impl;
-    Hash32 function(ref Key) _hasher;
-}
-
-/// Ditto
-struct UnmanagedHashMap32(Value) {
-    this(ref IAllocator allocator, uint num_buckets = 64) {
-        _buckets = allocator.make_array!(Node*)(num_buckets);
-    }
-
-    @disable this(this);
-
-    void clear(ref IAllocator allocator) {
-        foreach (bucket; _buckets) {
-            if (bucket)
-                Node.cleanup(bucket, allocator);
-        }
-
-        allocator.dispose(_buckets);
-    }
-
-    bool is_empty() {
-        return _num_entries == 0;
-    }
-
-    size_t size() {
-        return _num_entries;
-    }
-
-    bool contains(Hash32 hash) {
-        const bucket_id = hash.int_value % _buckets.length;
-        uint value_index;
-        return _get_bucket(hash, bucket_id, value_index);
-    }
-
-    ref Value get(Hash32 hash) {
-        const bucket_id = hash.int_value % _buckets.length;
-        uint value_index;
-        if (_get_bucket(hash, bucket_id, value_index))
-            return _buckets[bucket_id].values[value_index];
-        assert(0, "Key not found!");
-    }
-
-    Value try_get(Hash32 hash, lazy Value default_value) {
-        const bucket_id = hash.int_value % _buckets.length;
-        uint value_index;
-        if (_get_bucket(hash, bucket_id, value_index))
-            return _buckets[bucket_id].values[value_index];
-        return default_value;
-    }
-
-    bool insert(Hash32 hash, Value value, ref IAllocator allocator) {
-        if (_num_entries > _buckets.length && !_rehash(_buckets.length * 2, allocator))
-            return false;
-
-        const bucket_id = hash.int_value % _buckets.length;
-        if (auto bucket = _buckets[bucket_id]) {
-            foreach (i, map_hash; bucket.get_hashes()) {
-                if (map_hash == hash) {
-                    bucket.values[i] = value;
-                    return true;
-                }
-            }
-
-            if (bucket.append(hash, value, allocator)) {
-                _num_entries++;
-                return true;
-            }
-            else if (_rehash(_buckets.length * 2, allocator)) {
-                return insert(hash, value, allocator);
-            }
-
-            return false;
-        }
-        else if (auto node = Node.create(allocator, hash, value)) {
-            _buckets[bucket_id] = node;
-            _num_entries++;
-            return true;
-        }
-
-        return false;
-    }
-
-    Value remove(Hash32 hash, ref IAllocator allocator) {
-        const bucket_id = hash.int_value % _buckets.length;
-        uint value_index;
-
-        if (!_get_bucket(hash, bucket_id, value_index))
-            assert(0, "Key not found!");
-
-        auto bucket = _buckets[bucket_id];
-        auto value = bucket.values[value_index];
-        if (!bucket.remove(value_index, allocator))
-            assert(0, "Out of Memory!");
-
-        _num_entries--;
-        if (_num_entries * 4 < _buckets.length && !_rehash(_buckets.length / 2, allocator))
-            assert(0, "Out of Memory!");
-
-        return value;
+    Optional!(Value*) get(Key key) {
+        return _impl.get(key_hasher(key)).match!(
+            (Pair* v) => some(&v.value),
+            () => no!(Value*)
+        );
     }
 
 private:
-    static struct Node {
-        Hash32[8] hashes;
-        Value[8] values;
-        uint length;
+    struct Pair {
+        Key key;
+        Value value;
 
-        enum capacity = 8;
-
-        static Node* create(ref IAllocator allocator, Hash32 first_hash, ref Value first_value) {
-            if (auto node = allocator.make!Node()) {
-                node.hashes[0] = first_hash;
-                node.values[0] = first_value;
-                node.length = 1;
-                return node;
-            }
-            return null;
-        }
-
-        static void cleanup(Node* node, ref IAllocator allocator) {
-            allocator.dispose(node);
-        }
-
-        pragma(inline, true) Hash32[] get_hashes() {
-            return hashes[0 .. length];
-        }
-
-        bool append(Hash32 hash, ref Value value, ref IAllocator allocator) {
-            if (length == capacity)
-                return false;
-
-            hashes[length] = hash;
-            values[length] = value;
-            length++;
-            return true;
-        }
-
-        bool remove(uint index, ref IAllocator allocator) {
-            assert(index < length);
-
-            memmove(hashes.ptr + index, hashes.ptr + index + 1, Hash32.sizeof * (length - index));
-            memmove(values.ptr + index, values.ptr + index + 1, Value.sizeof * (length - index));
-            length--;
-
-            return true;
+        pragma(inline, true) static hash(ref Pair pair) {
+            return key_hasher(pair.key);
         }
     }
 
-    bool _rehash(size_t new_size, ref IAllocator allocator) {
-        auto new_buckets = allocator.make_array!(Node*)(new_size);
-        if (!new_buckets)
-            return false;
-
-        foreach (bucket; _buckets) {
-            if (!bucket)
-                continue;
-
-            foreach (i; 0 .. bucket.length) {
-                const map_hash = bucket.hashes[i];
-                const new_index = map_hash.int_value % new_buckets.length;
-                if (auto new_bucket = new_buckets[new_index]) {
-                    new_bucket.append(map_hash, bucket.values[i], allocator);
-                }
-                else if (auto new_bucket = Node.create(allocator, map_hash, bucket.values[i])) {
-                    new_buckets[new_index] = new_bucket;
-                }
-                else
-                    return false;
-            }
-
-            Node.cleanup(bucket, allocator);
-        }
-
-        allocator.dispose(_buckets);
-        _buckets = new_buckets;
-
-        return true;
-    }
-
-    bool _get_bucket(Hash32 hash, size_t bucket_id, out uint index) {
-        if (auto bucket = _buckets[bucket_id]) {
-            foreach (i; 0 .. bucket.length)
-                if (bucket.hashes[i] == hash) {
-                    index = cast(uint) i;
-                    return true;
-                }
-        }
-        return false;
-
-        // auto bucket =_buckets[bucket_id];
-        // if (bucket) {
-        //     for (uint i = 0; i < bucket.length; i++) {
-        //         if (bucket.hashes.ptr[i] == hash) {
-        //             index = i;
-        //             return true;
-        //         }
-        //     }
-        // }
-        // return false;
-    }
-
-    uint _num_entries;
-    Node*[] _buckets;
+    HashTable!(Pair, Pair.hash) _impl;
 }
 
-unittest {
+@("HashMap: insert(), contains(), and get()") unittest {
     import shard.memory.allocators.system : SystemAllocator;
     import std.random : uniform;
     import std.range : iota, lockstep;
 
     SystemAllocator mem;
-    auto map = UnmanagedHashMap32!uint(mem.allocator_api());
+    HashMap!(Hash!32, ulong) set;
+
+    ulong[Hash!32] hashes;
+    while (hashes.length < 1_000)
+        hashes[Hash!32(uniform(0, uint.max))] = hashes.length;
+
+    foreach (key; hashes.byKey)
+        set.insert(key, hashes[key], mem.allocator_api());
+
+    foreach (key; hashes.byKey) {
+        assert(set.contains(key));
+        assert(*set.get(key) == hashes[key]);
+    }
+}
+
+struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
+    alias hash_t = ReturnType!value_hasher;
+
+    size_t size() {
+        return _impl.size();
+    }
+
+    bool is_empty() {
+        return _impl.is_empty();
+    }
+
+    bool contains(Value entry) {
+        return _impl.contains(value_hasher(entry));
+    }
+
+    void insert(Value value, ref IAllocator allocator) {
+        auto entry = Entry(value_hasher(value), move(value));
+        _impl.insert(entry.key, entry, allocator);
+    }
+
+    void remove(Value value, ref IAllocator allocator) {
+        _impl.remove(value_hasher(value), allocator);
+    }
+
+private:
+    struct Entry {
+        hash_t key;
+        Value value;
+
+        pragma(inline, true) static hash(ref Entry entry) {
+            return value_hasher(entry.key);
+        }
+    }
+
+    HashTable!(Entry, Entry.hash) _impl;
+}
+
+@("HashSet: insert(), remove()") unittest {
+    import shard.memory.allocators.system : SystemAllocator;
+    import std.random : uniform;
+
+    SystemAllocator mem;
+    HashSet!(Hash!32) set;
 
     alias Unit = void[0];
-    Unit[Hash32] hashes;
-    while (hashes.length < 100_000)
-        hashes[Hash32(uniform(0, uint.max))] = Unit.init;
+    Unit[Hash!32] hashes;
+    while (hashes.length < 1_000)
+        hashes[Hash!32(uniform(0, uint.max))] = Unit.init;
 
-    auto values = new Hash32[](100_000);
-    foreach(i, hash; lockstep(iota(values.length), hashes.byKey))
-        values[i] = hash;
+    foreach (v; hashes.byKey)
+        set.insert(v, mem.allocator_api());
 
-    assert(map.is_empty());
-    assert(map.size() == 0);
+    assert(set.size() == 1_000);
 
-    foreach (i, v; values) {
-        map.insert(v, cast(uint) i, mem.allocator_api());
-        assert(map.contains(v));
-        assert(map.get(v) == i);
-        assert(map.size() == i + 1);
+    foreach (v; hashes.byKey)
+        set.remove(v, mem.allocator_api());
+
+    foreach (v; hashes.byKey)
+        assert(!set.contains(v));
+
+    assert(set.size() == 0);
+}
+
+/**
+A hash set with configurable hasher. The size of the hash is determined by the
+return type of the `value_hasher` template parameter.
+
+Params:
+    Value = The type containing data within the table.
+    hasher = A callable that produces a hash from a value.
+
+Note:
+    If using `HashN.of` functions for the hasher, make sure to instantiate the
+    type!
+
+    e.g.
+    ```
+    HashSet!(size_t, Hash32.of!Hash32) map;
+    ```
+*/
+private struct HashTable(Value, alias value_hasher = Hash!32.of!Value) {
+    alias hash_t = ReturnType!value_hasher;
+
+    enum max_load_factor = 0.8;
+
+    static assert(is_hash!hash_t, "value_hasher() must return a hash type!");
+
+    @disable this(this);
+
+    size_t size() {
+        return _table.num_entries;
     }
 
-    foreach (v; values) {
-        map.remove(v, mem.allocator_api());
-        assert(!map.contains(v));
+    bool is_empty() {
+        return _table.num_entries == 0;
     }
 
-    assert(map.size() == 0);
+    void reset(ref IAllocator allocator) {
+        static if (hasElaborateDestructor!Value) {
+            foreach (i, ref value; _table.values) {
+                if (_table.has_value(i))
+                    destroy(value);
+            }
+        }
+
+        Table.dispose(_table, allocator);
+        _table = Table();
+    }
+
+    bool contains(hash_t key) {
+        return get(key) != none;
+    }
+
+    bool insert(hash_t key, Value value, ref IAllocator allocator) {
+        return _insert(&_table, key, value, allocator);
+    }
+
+    bool insert(hash_t key, ref Value value, ref IAllocator allocator) {
+        return _insert(&_table, key, value, allocator);
+    }
+
+    void remove(hash_t key, ref IAllocator allocator) {
+        auto value_opt = get(key);
+        if (value_opt == none)
+            return;
+
+        auto value = value_opt.front();
+
+        auto index = value - _table.values.ptr;
+        auto next = index + 1;
+
+        _table.distances[index] = -1;
+        static if (hasElaborateDestructor!Value)
+            destroy(value);
+
+        for (; _table.distances[next] > 0; index++, next++) {
+            _table.values[index] = move(_table.values[next]);
+            _table.distances[index] = cast(byte)(_table.distances[next] - 1);
+
+            static if (hasElaborateDestructor!Value)
+                destroy(_table.values[next]);
+            _table.distances[next] = -1;
+        }
+
+        _table.num_entries--;
+    }
+
+    Optional!(Value*) get(hash_t key) {
+        auto index = _table.index_of(key);
+        auto distance = 0;
+
+        for (; _table.distances[index] >= distance; distance++, index++) {
+            if (key == value_hasher(_table.values[index]))
+                return some(&_table.values[index]);
+        }
+
+        return no!(Value*);
+    }
+
+private:
+    enum smallest_size = 8;
+
+    struct Table {
+        /// The slots for values in the table. The length of the table is
+        /// `max_entries + max_distance` to simplify code for insert().
+        Value[] values;
+        byte[] distances;
+
+        /// The maximum number of slots a value can be from the optimum.
+        size_t max_distance;
+        /// The maximum number of values that can be in the table, considering
+        /// maximum load factor.
+        size_t max_entries;
+        /// The capacity for which the table was created.
+        size_t created_capacity;
+
+        /// The number of values in the table.
+        size_t num_entries;
+
+        @disable this(this);
+
+        /// Creates a new table with `capacity + ilog2(capacity)` slots. The
+        /// extra slots enable search loops to avoid bounds checking by
+        /// nature of `index_of`, which provides an index only to `capacity`.
+        static bool create(size_t capacity, ref IAllocator allocator, out Table table) {
+            const max_distance = ilog2(capacity);
+            const real_capacity = (capacity + max_distance);
+            const max_entries = cast(size_t)(capacity * max_load_factor);
+
+            auto values = allocator.make_raw_array!Value(real_capacity);
+            if (!values)
+                return false;
+
+            auto distances = allocator.make_raw_array!byte(real_capacity);
+            if (!distances)
+                return false;
+            distances[] = -1;
+
+            table.values = values;
+            table.distances = distances;
+            table.max_distance = max_distance;
+            table.max_entries = max_entries;
+            table.created_capacity = capacity;
+            table.num_entries = 0;
+
+            return true;
+        }
+
+        static void dispose(ref Table table, ref IAllocator allocator) {
+            allocator.dispose(table.values);
+            allocator.dispose(table.distances);
+            table = Table();
+        }
+
+        size_t index_of(hash_t hash) {
+            // 2 ^ 64 / golden_ratio, rounded up to nearest odd
+            enum size_t multiple = 114_00_714_819_323_198_485;
+
+            assert(is_power_of_two(created_capacity));
+            return (hash.int_value * multiple) & (created_capacity - 1);
+        }
+
+        pragma(inline, true) bool has_value(size_t index) {
+            return distances[index] >= 0;
+        }
+
+        pragma(inline, true) bool is_empty(size_t index) {
+            return distances[index] == -1;
+        }
+    }
+
+    static bool _insert(Table* table, hash_t key, ref Value value, ref IAllocator allocator) {
+        if (table.num_entries == table.max_entries && !_grow(table, allocator)) {
+            return false;
+        }
+
+        byte distance = 0;
+        size_t insert_point = table.index_of(key);
+        // import std.stdio; writeln(table.values.length, ":", insert_point);
+        for (; table.distances[insert_point] >= distance; distance++, insert_point++) {
+            if (value_hasher(table.values[insert_point]) == key) {
+                swap(table.values[insert_point], value);
+
+                static if (hasElaborateDestructor!Value)
+                    destroy(value);
+
+                return true;
+            }
+        }
+
+        if (distance > table.max_distance) {
+            if (_grow(table, allocator))
+                return _insert(table, key, value, allocator);
+            return false;
+        }
+
+        if (table.is_empty(insert_point)) {
+            table.values[insert_point] = move(value);
+            table.distances[insert_point] = distance;
+            table.num_entries++;
+            return true;
+        }
+
+        auto swap_value = move(value);
+        swap(table.values[insert_point], swap_value);
+        swap(table.distances[insert_point], distance);
+
+        distance++;
+        insert_point++;
+        for (; !table.is_empty(insert_point); distance++, insert_point++) {
+            if (table.distances[insert_point] < distance) {
+                swap(table.values[insert_point], swap_value);
+                swap(table.distances[insert_point], distance);
+            }
+            else if (distance == table.max_distance) {
+                if (!_grow(table, allocator))
+                    return false;
+                else
+                    return _insert(table, value_hasher(swap_value), swap_value, allocator);
+            }
+        }
+
+        table.distances[insert_point] = distance;
+        table.values[insert_point] = move(swap_value);
+        table.num_entries++;
+        return true;
+    }
+
+    static bool _grow(Table* table, ref IAllocator allocator) {
+        return _rehash(table, max(smallest_size, table.created_capacity * 2), allocator);
+    }
+
+    static bool _rehash(Table* table, size_t capacity, ref IAllocator allocator) {
+        Table new_table;
+        if (!Table.create(capacity, allocator, new_table))
+            return false;
+
+        foreach (i, distance; table.distances) {
+            if (distance >= 0) {
+                _insert(&new_table, value_hasher(table.values[i]), table.values[i], allocator);
+
+                static if (hasElaborateDestructor!Value)
+                    destroy(table.values[i]);
+            }
+        }
+
+        swap(*table, new_table);
+
+        if (new_table.values)
+            Table.dispose(new_table, allocator);
+
+        return true;
+    }
+
+    Table _table;
+}
+
+@("HashTable: colliding inserts") unittest {
+    import shard.memory.allocators.system : SystemAllocator;
+
+    SystemAllocator mem;
+    HashTable!int set;
+
+    set.insert(Hash!32(3), 100, mem.allocator_api);
+    set.insert(Hash!32(11), 200, mem.allocator_api);
+    set.insert(Hash!32(19), 300, mem.allocator_api);
+    set.insert(Hash!32(27), 400, mem.allocator_api);
+
+    // Colliding slots are correctly inserted past `table.created_capacity`
+    assert(set._table.created_capacity == 8);
+    assert(set._table.max_distance == 3);
+
+    assert(set._table.values[7] == 100);
+    assert(set._table.distances[7] == 0);
+
+    assert(set._table.values[8] == 200);
+    assert(set._table.distances[8] == 1);
+
+    assert(set._table.values[9] == 300);
+    assert(set._table.distances[9] == 2);
+
+    assert(set._table.values[10] == 400);
+    assert(set._table.distances[10] == 3);
 }
