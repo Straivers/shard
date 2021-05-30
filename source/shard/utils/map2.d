@@ -262,6 +262,7 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
                 swap(table.values[insert_point], swap_value);
                 swap(table.distances[insert_point], distance);
                 distance++;
+                insert_point++;
             }
             else if (distance == table.max_distance) {
                 if (!_grow(table, allocator))
