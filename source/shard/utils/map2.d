@@ -3,7 +3,7 @@ module shard.utils.map2;
 import shard.hash : Hash, is_hash;
 import shard.math : ilog2, is_power_of_two;
 import shard.memory.allocators.api : IAllocator;
-import shard.utils.optional : Optional, some, no, none;
+import shard.utils.optional : Optional, some, no, none, match;
 import std.algorithm : max, move, swap;
 import std.traits : hasElaborateDestructor, ReturnType;
 
@@ -24,7 +24,7 @@ Note:
     HashTable!(Hash32, size_t) map;
     ```
 */
-struct HashTable(Key, Value, alias key_hasher = Hash!32.of!Key) {
+struct HashMap(Key, Value, alias key_hasher = Hash!32.of!Key) {
     size_t size() {
         return _impl.size();
     }
@@ -51,9 +51,10 @@ struct HashTable(Key, Value, alias key_hasher = Hash!32.of!Key) {
     }
 
     Optional!(Value*) get(Key key) {
-        if (auto pair = _impl.get(key_hasher(key)))
-            return &pair.value;
-        return null;
+        return _impl.get(key_hasher(key)).match!(
+            (Pair* v) => some(&v.value),
+            () => no!(Value*)
+        );
     }
 
 private:
@@ -66,7 +67,91 @@ private:
         }
     }
 
-    HashSet!(Pair, Pair.hash) _impl;
+    HashTable!(Pair, Pair.hash) _impl;
+}
+
+@("HashMap: insert(), contains(), and get()") unittest {
+    import shard.memory.allocators.system : SystemAllocator;
+    import std.random : uniform;
+    import std.range : iota, lockstep;
+
+    SystemAllocator mem;
+    HashMap!(Hash!32, ulong) set;
+
+    ulong[Hash!32] hashes;
+    while (hashes.length < 1_000)
+        hashes[Hash!32(uniform(0, uint.max))] = hashes.length;
+
+    foreach (key; hashes.byKey)
+        set.insert(key, hashes[key], mem.allocator_api());
+
+    foreach (key; hashes.byKey) {
+        assert(set.contains(key));
+        assert(*set.get(key) == hashes[key]);
+    }
+}
+
+struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
+    alias hash_t = ReturnType!value_hasher;
+
+    size_t size() {
+        return _impl.size();
+    }
+
+    bool is_empty() {
+        return _impl.is_empty();
+    }
+
+    bool contains(Value entry) {
+        return _impl.contains(value_hasher(entry));
+    }
+
+    void insert(Value value, ref IAllocator allocator) {
+        auto entry = Entry(value_hasher(value), move(value));
+        _impl.insert(entry.key, entry, allocator);
+    }
+
+    void remove(Value value, ref IAllocator allocator) {
+        _impl.remove(value_hasher(value), allocator);
+    }
+
+private:
+    struct Entry {
+        hash_t key;
+        Value value;
+
+        pragma(inline, true) static hash(ref Entry entry) {
+            return value_hasher(entry.key);
+        }
+    }
+
+    HashTable!(Entry, Entry.hash) _impl;
+}
+
+@("HashSet: insert(), remove()") unittest {
+    import shard.memory.allocators.system : SystemAllocator;
+    import std.random : uniform;
+
+    SystemAllocator mem;
+    HashSet!(Hash!32) set;
+
+    alias Unit = void[0];
+    Unit[Hash!32] hashes;
+    while (hashes.length < 1_000)
+        hashes[Hash!32(uniform(0, uint.max))] = Unit.init;
+
+    foreach (v; hashes.byKey)
+        set.insert(v, mem.allocator_api());
+
+    assert(set.size() == 1_000);
+
+    foreach (v; hashes.byKey)
+        set.remove(v, mem.allocator_api());
+
+    foreach (v; hashes.byKey)
+        assert(!set.contains(v));
+
+    assert(set.size() == 0);
 }
 
 /**
@@ -86,7 +171,7 @@ Note:
     HashSet!(size_t, Hash32.of!Hash32) map;
     ```
 */
-struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
+private struct HashTable(Value, alias value_hasher = Hash!32.of!Value) {
     alias hash_t = ReturnType!value_hasher;
 
     enum max_load_factor = 0.8;
@@ -165,7 +250,7 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
         return no!(Value*);
     }
 
-    // private:
+private:
     enum smallest_size = 8;
 
     struct Table {
@@ -323,11 +408,11 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
     Table _table;
 }
 
-@("HashSet: colliding inserts") unittest {
+@("HashTable: colliding inserts") unittest {
     import shard.memory.allocators.system : SystemAllocator;
 
     SystemAllocator mem;
-    HashSet!int set;
+    HashTable!int set;
 
     set.insert(Hash!32(3), 100, mem.allocator_api);
     set.insert(Hash!32(11), 200, mem.allocator_api);
@@ -349,51 +434,4 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
 
     assert(set._table.values[10] == 400);
     assert(set._table.distances[10] == 3);
-}
-
-@("HashSet: insert(), contains(), and get()") unittest {
-    import shard.memory.allocators.system : SystemAllocator;
-    import std.random : uniform;
-
-    SystemAllocator mem;
-    HashSet!(Hash!32) set;
-
-    alias Unit = void[0];
-    Unit[Hash!32] hashes;
-    while (hashes.length < 1_000)
-        hashes[Hash!32(uniform(0, uint.max))] = Unit.init;
-
-    foreach (v; hashes.byKey)
-        set.insert(v, v, mem.allocator_api());
-
-    foreach (v; hashes.byKey) {
-        assert(set.contains(v));
-        assert(*set.get(v) == v);
-    }
-}
-
-@("HashSet: insert(), remove()") unittest {
-    import shard.memory.allocators.system : SystemAllocator;
-    import std.random : uniform;
-
-    SystemAllocator mem;
-    HashSet!(Hash!32) set;
-
-    alias Unit = void[0];
-    Unit[Hash!32] hashes;
-    while (hashes.length < 1_000)
-        hashes[Hash!32(uniform(0, uint.max))] = Unit.init;
-
-    foreach (v; hashes.byKey)
-        set.insert(v, v, mem.allocator_api());
-
-    assert(set.size() == 1_000);
-
-    foreach (v; hashes.byKey)
-        set.remove(v, mem.allocator_api());
-
-    foreach (v; hashes.byKey)
-        assert(!set.contains(v));
-
-    assert(set.size() == 0);
 }
