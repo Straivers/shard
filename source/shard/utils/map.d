@@ -81,18 +81,18 @@ private:
     import std.range : iota, lockstep;
 
     SystemAllocator mem;
-    HashMap!(Hash!32, ulong) set;
+    HashMap!(Hash!32, ulong) map;
 
     ulong[Hash!32] hashes;
     while (hashes.length < 1_000)
         hashes[Hash!32(uniform(0, uint.max))] = hashes.length;
 
     foreach (key; hashes.byKey)
-        set.insert(key, hashes[key], mem.allocator_api());
+        map.insert(key, hashes[key], mem.allocator_api());
 
     foreach (key; hashes.byKey) {
-        assert(set.contains(key));
-        assert(*set.get(key) == hashes[key]);
+        assert(map.contains(key));
+        assert(*map.get(key) == hashes[key]);
     }
 }
 
@@ -463,28 +463,28 @@ private:
     import shard.memory.allocators.system : SystemAllocator;
 
     SystemAllocator mem;
-    HashTable!int set;
+    HashTable!int table;
 
-    set.insert(Hash!32(3), 100, mem.allocator_api);
-    set.insert(Hash!32(11), 200, mem.allocator_api);
-    set.insert(Hash!32(19), 300, mem.allocator_api);
-    set.insert(Hash!32(27), 400, mem.allocator_api);
+    table.insert(Hash!32(3), 100, mem.allocator_api);
+    table.insert(Hash!32(11), 200, mem.allocator_api);
+    table.insert(Hash!32(19), 300, mem.allocator_api);
+    table.insert(Hash!32(27), 400, mem.allocator_api);
 
     // Colliding slots are correctly inserted past `table.created_capacity`
-    assert(set._table.created_capacity == 8);
-    assert(set._table.max_distance == 3);
+    assert(table._table.created_capacity == 8);
+    assert(table._table.max_distance == 3);
 
-    assert(set._table.values[7] == 100);
-    assert(set._table.distances[7] == 0);
+    assert(table._table.values[7] == 100);
+    assert(table._table.distances[7] == 0);
 
-    assert(set._table.values[8] == 200);
-    assert(set._table.distances[8] == 1);
+    assert(table._table.values[8] == 200);
+    assert(table._table.distances[8] == 1);
 
-    assert(set._table.values[9] == 300);
-    assert(set._table.distances[9] == 2);
+    assert(table._table.values[9] == 300);
+    assert(table._table.distances[9] == 2);
 
-    assert(set._table.values[10] == 400);
-    assert(set._table.distances[10] == 3);
+    assert(table._table.values[10] == 400);
+    assert(table._table.distances[10] == 3);
 
-    set.reset(mem.allocator_api());
+    table.reset(mem.allocator_api());
 }
