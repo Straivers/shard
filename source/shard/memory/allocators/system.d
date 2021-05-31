@@ -18,7 +18,6 @@ public:
                 &allocator_api_allocate,
                 &allocator_api_deallocate,
                 &allocator_api_reallocate,
-                null
             );
 
         return _allocator_api;
