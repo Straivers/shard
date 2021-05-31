@@ -3,7 +3,6 @@ module shard.utils.map;
 import shard.hash : Hash, is_hash;
 import shard.math : ilog2, is_power_of_two;
 import shard.memory.allocators.api : IAllocator;
-import shard.utils.optional : Optional, some, no, none, match;
 import std.algorithm : max, move, swap;
 import std.traits : hasElaborateDestructor, ReturnType;
 
@@ -54,8 +53,8 @@ struct HashMap(Key, Value, alias key_hasher = Hash!32.of!Key) {
         _impl.remove(key_hasher(key), allocator);
     }
 
-    Optional!(Value*) get(Key key) {
-        return _impl.get(key_hasher(key)).match!((Pair* v) => some(&v.value), () => no!(Value*));
+    Value* get(Key key) {
+        return &_impl.get(key_hasher(key)).value;
     }
 
     Value* get_or_insert()(Key key, auto ref Value value, ref IAllocator allocator) {
@@ -227,7 +226,7 @@ private struct HashTable(Value, alias value_hasher = Hash!32.of!Value) {
     }
 
     bool contains(hash_t key) {
-        return get(key) != none;
+        return get(key) !is null;
     }
 
 
@@ -247,11 +246,9 @@ private struct HashTable(Value, alias value_hasher = Hash!32.of!Value) {
     }
 
     void remove(hash_t key, ref IAllocator allocator) {
-        auto value_opt = get(key);
-        if (value_opt == none)
+        auto value = get(key);
+        if (value is null)
             return;
-
-        auto value = value_opt.front();
 
         auto index = value - _table.values.ptr;
         auto next = index + 1;
@@ -272,16 +269,16 @@ private struct HashTable(Value, alias value_hasher = Hash!32.of!Value) {
         _table.num_entries--;
     }
 
-    Optional!(Value*) get(hash_t key) {
+    Value* get(hash_t key) {
         auto distance = 0;
         auto index = _table.index_of(key);
 
         for (; _table.distances[index] >= distance; distance++, index++) {
             if (key == value_hasher(_table.values[index]))
-                return some(&_table.values[index]);
+                return &_table.values[index];
         }
 
-        return no!(Value*);
+        return null;
     }
 
     Value* get_or_insert()(hash_t key, auto ref Value value, ref IAllocator allocator) {

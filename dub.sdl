@@ -5,7 +5,6 @@ copyright "Copyright © 2021, David Zhang"
 license "MIT"
 
 targetPath "bin"
-dependency "optional" version="~>1.2.1"
 
 configuration "library" {
     buildOptions "betterC"
