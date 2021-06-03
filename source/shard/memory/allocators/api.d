@@ -5,6 +5,10 @@ import shard.memory.lifetime;
 
 public import std.typecons : Ternary;
 
+/** 
+ * IAllocator provides a uniform interface for accessing custom allocators and
+ * sub-allocators.
+ */
 struct IAllocator {
     @disable this(this);
 
@@ -14,6 +18,8 @@ struct IAllocator {
     void[] function(void*, size_t) nothrow              allocate_fn;
     void function(void*, void[]) nothrow                deallocate_fn;
     bool function(void*, ref void[], size_t) nothrow    reallocate_fn;
+
+    static assert(typeof(this).sizeof == 48);
 
     /// The minimum alignment for all allocations.
     size_t alignment() const nothrow {
@@ -166,8 +172,8 @@ version (unittest) {
             m2 = allocator.allocate(20);
 
             // Grow not-most-recent allocation
-            allocator.reallocate(m1, 234);
-            assert(m1.length == 234);
+            allocator.reallocate(m1, 64);
+            assert(m1.length == 64);
 
             // Shrink not-most-recent allocation
             allocator.reallocate(m2, 1);

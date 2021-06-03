@@ -61,3 +61,16 @@ unittest {
     assert(bits_to_store(128 - 1) == 7);
     assert(bits_to_store(128) == 8);
 }
+
+template uint_type_to_store(size_t max_value) {
+    static if (max_value <= ubyte.max)
+        alias uint_type_to_store = ubyte;
+    else static if (max_value <= ushort.max)
+        alias uint_type_to_store = ushort;
+    else static if (max_value <= uint.max)
+        alias uint_type_to_store = uint;
+    else static if (max_value <= ulong.max)
+        alias uint_type_to_store = ulong;
+    else
+        static assert(0, "max_value cannot be represented by an in-memory unsigned int type");
+}
