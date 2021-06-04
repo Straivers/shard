@@ -25,13 +25,13 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
         _impl.reset(allocator);
     }
 
-    void insert(Value value, ref IAllocator allocator) nothrow {
+    Value* insert(Value value, ref IAllocator allocator) nothrow {
         auto entry = Entry(value_hasher(value), move(value));
-        _impl.insert(entry.key, entry, allocator);
+        return &_impl.insert(entry.key, entry, allocator).value;
     }
 
-    void remove(Value value, ref IAllocator allocator) nothrow {
-        _impl.remove(value_hasher(value), allocator);
+    bool remove(Value value, ref IAllocator allocator) nothrow {
+        return _impl.remove(value_hasher(value), allocator);
     }
 
 private:
@@ -69,7 +69,7 @@ private:
     assert(set.size() == 1_000);
 
     foreach (v; hashes.byKey)
-        set.remove(v, mem.allocator_api());
+        assert(set.remove(v, mem.allocator_api()));
 
     foreach (v; hashes.byKey)
         assert(!set.contains(v));

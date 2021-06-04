@@ -56,14 +56,15 @@ struct HashTable(Value, alias value_hasher = Hash!32.of!Value) {
         _table = Table();
     }
 
-    bool insert()(hash_t key, auto ref Value value, ref IAllocator allocator) nothrow {
-        return _insert(&_table, key, value, allocator) !is null;
+    Value* insert()(hash_t key, auto ref Value value, ref IAllocator allocator) nothrow {
+        return _insert(&_table, key, value, allocator);
     }
 
-    void remove(hash_t key, ref IAllocator allocator) nothrow {
+    /// Returns: `true` if the key existed, `false` otherwise.
+    bool remove(hash_t key, ref IAllocator allocator) nothrow {
         auto value = get(key);
         if (value is null)
-            return;
+            return false;
 
         auto index = value - _table.values.ptr;
         auto next = index + 1;
@@ -82,6 +83,7 @@ struct HashTable(Value, alias value_hasher = Hash!32.of!Value) {
         }
 
         _table.num_entries--;
+        return true;
     }
 
     Value* get(hash_t key) nothrow {

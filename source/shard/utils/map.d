@@ -40,17 +40,17 @@ struct HashMap(Key, Value, alias key_hasher = Hash!32.of!Key) {
         _impl.reset(allocator);
     }
 
-    void insert(Key key, ref Value value, ref IAllocator allocator) nothrow {
+    Value* insert(Key key, ref Value value, ref IAllocator allocator) nothrow {
         auto pair = Pair(key, move(value));
-        _impl.insert(key_hasher(key), pair, allocator);
+        return &_impl.insert(key_hasher(key), pair, allocator).value;
     }
 
-    void insert(Key key, Value value, ref IAllocator allocator) nothrow {
-        _impl.insert(key_hasher(key), Pair(key, value), allocator);
+    Value* insert(Key key, Value value, ref IAllocator allocator) nothrow {
+        return &_impl.insert(key_hasher(key), Pair(key, value), allocator).value;
     }
 
-    void remove(Key key, ref IAllocator allocator) nothrow {
-        _impl.remove(key_hasher(key), allocator);
+    bool remove(Key key, ref IAllocator allocator) nothrow {
+        return _impl.remove(key_hasher(key), allocator);
     }
 
     Value* get(Key key) nothrow {
