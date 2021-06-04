@@ -9,6 +9,7 @@ import std.bitmanip : bitfields;
 import std.traits : fullyQualifiedName;
 
 alias ScopeId = uint;
+
 /*
 struct AllocationTracker {
     TrackedAllocator* sys_allocator() {
@@ -99,14 +100,15 @@ private:
     // HandlePool!TrackingScope _scopes;
     HashTable!(TrackedType, TrackedType.hash) _tracked_types;
 }
+*/
 
 struct TrackedAllocator {
-    this(IAllocator* base, AllocationTracker* tracker) {
-        _base = base;
-        _tracker = tracker;
-        _allocator_api = IAllocator(&this, &allocator_api_alignment, null,
-                &allocator_api_allocate, &allocator_api_deallocate, &allocator_api_reallocate);
-    }
+    // this(IAllocator* base, AllocationTracker* tracker) {
+    //     _base = base;
+    //     _tracker = tracker;
+    //     _allocator_api = IAllocator(&this, &allocator_api_alignment, null,
+    //             &allocator_api_allocate, &allocator_api_deallocate, &allocator_api_reallocate);
+    // }
 
     @disable this(this);
 
@@ -114,44 +116,53 @@ struct TrackedAllocator {
 
     }
 
-    ref IAllocator allocator_api() nothrow return {
-        return _allocator_api;
+    IAllocator allocator_api() nothrow return {
+        // dfmt off
+        return IAllocator(
+            &this,
+            &allocator_api_alignment,
+            null,
+            &allocator_api_allocate,
+            &allocator_api_deallocate,
+            &allocator_api_reallocate
+        );
+        // dfmt on
     }
 
     PtrType!T make(T, Args...)(auto ref Args args) nothrow {
         auto p = _base.make!T(args);
-        if (p)
-            _tracker.register_allocation(0, memory);
+        // if (p)
+        //     _tracker.register_allocation(0, memory);
         return p;
     }
 
     T[] make_array(T)(size_t length) nothrow {
         auto a = _base.make_array!T(length);
-        if (a)
-            _tracker.register_array_allocation(0, a);
+        // if (a)
+        //     _tracker.register_array_allocation(0, a);
         return a;
     }
 
     T[] make_raw_array(T)(size_t length) nothrow {
         auto a = _base.make_raw_array!T(length);
-        if (a)
-            _tracker.register_array_allocation(0, a);
+        // if (a)
+        //     _tracker.register_array_allocation(0, a);
         return a;
     }
 
     void dispose(T)(auto ref T* p) nothrow {
         _base.dispose(p);
-        _tracker.register_deallocation(0, p);
+        // _tracker.register_deallocation(0, p);
     }
 
     void dispose(T)(auto ref T p) nothrow if (is(T == class) || is(T == interface)) {
         _base.dispose(p);
-        _tracker.register_deallocation(0, p);
+        // _tracker.register_deallocation(0, p);
     }
 
     void dispose(T)(auto ref T[] p) nothrow {
         _base.dispose(p);
-        _tracker.register_array_deallocation(0, p);
+        // _tracker.register_array_deallocation(0, p);
     }
 
     bool resize_array(T)(ref T[] array, size_t length) nothrow {
@@ -184,9 +195,10 @@ private:
     }
 
     IAllocator* _base;
-    IAllocator _allocator_api;
 
     ScopeId _tracker_scope;
-    AllocationTracker* _tracker;
+    // AllocationTracker* _tracker;
+    void* _placeholder;
+    
+    static assert(typeof(this).sizeof == 24);
 }
-*/

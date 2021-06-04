@@ -2,7 +2,6 @@ module shard.memory.allocators.slab;
 
 import shard.math : round_to_next;
 import core.stdc.string : memset;
-import shard.utils.intrusive_list : intrusive_slist;
 import shard.memory.allocators.api : IAllocator;
 import shard.memory.values : platform_alignment;
 import shard.traits : uint_type_to_store;

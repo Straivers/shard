@@ -1,6 +1,5 @@
 module shard.utils.intrusive_list;
 
-
 mixin template intrusive_list(T) {
     T* prev, next;
 

@@ -46,7 +46,7 @@ template object_alignment(T) {
         enum object_alignment = T.alignof;
 }
 
-size_t bits_to_store(size_t value) nothrow {
+pragma(inline, true) size_t bits_to_store(size_t value) nothrow {
     import core.bitop : bsr;
 
     return value == 0 ? 0 : bsr(value) + 1;
