@@ -1,9 +1,9 @@
 module shard.utils.handle;
 
 import shard.memory.allocators.api : IAllocator;
-import shard.memory.tracker: TrackedAllocator;
+import shard.memory.tracker : TrackedAllocator;
 import shard.traits : bits_to_store;
-import std.bitmanip : taggedPointer, bitfields;
+import std.bitmanip : taggedPointer;
 
 /**
 A `HandlePool` allocates up to `capacity` unique, non-repeating handles. These
@@ -18,7 +18,7 @@ struct HandlePool {
     struct Handle {
         uint value;
 
-        bool opCast(T: bool)() const {
+        bool opCast(T : bool)() const {
             return value > 0;
         }
     }
@@ -26,27 +26,20 @@ struct HandlePool {
     this(size_t capacity, ref IAllocator allocator) {
         assert(capacity < (1 << 31), "Specified capacity greater than 2 ^ 31 element limit");
         _allocator.api = &allocator;
-        this(allocator.make_array!Handle(capacity));
+        _init_handles(allocator.make_array!Handle(capacity));
     }
 
     this(size_t capacity, ref TrackedAllocator allocator) {
         assert(capacity < (1 << 31), "Specified capacity greater than 2 ^ 31 element limit");
         _is_tracked = true;
         _allocator.tracked = &allocator;
-        this(allocator.make_array!Handle(capacity));
+        _init_handles(allocator.make_array!Handle(capacity));
     }
 
     this(Handle[] handles) {
         assert(handles.length < (1 << 31), "Specified capacity greater than 2 ^ 31 element limit");
-        _handles = handles.ptr;
-        _num_handles = cast(uint) handles.length;
-        _value_mask = (1 << bits_to_store(_num_handles - 1)) - 1;
-
-        _freelist_length = _num_handles;
-        foreach_reverse(i, ref handle; _handles[0 .. _num_handles]) {
-            _set_index(handle.value, _freelist);
-            _freelist = cast(uint) i;
-        }
+        handles[] = Handle();
+        _init_handles(handles);
     }
 
     ~this() {
@@ -62,9 +55,9 @@ struct HandlePool {
     Checks if the handle is valid.
     */
     bool is_valid(Handle handle) {
-        const index = _get_index(handle.value);
-        
-        return index < _num_handles && _get_generation(_handles[index].value) == _get_generation(handle.value);
+        const index = _get_index(handle);
+
+        return index < _num_handles && _get_generation(_handles[index]) == _get_generation(handle);
     }
 
     /**
@@ -76,53 +69,79 @@ struct HandlePool {
     Returns: An index in the range [0, capacity).
     */
     uint index_of(Handle handle) {
-        return _get_index(handle.value);
+        assert(is_valid(handle));
+        return _get_index(handle);
     }
 
     /**
     Allocates a new handle.
 
+    Returns: A new opaque handle, or else Handle(0) if the pool has run out of
+    handles.
     */
     Handle allocate() {
-        /*
-        Problem:
-         - Handle allocation can fail, but there's no way to easily indicate a
-           failed allocation. Asserting that there are always handle available
-           is a bad idea, and std.variant is not betterC compatible.
-        
-        Solution:
-         - Reserve Handle() for an invalid handle.
-            - We assert that there will never be more than 2 billion handles (8 gib of memory)
-            - At 2 billion handles, 31 bits are consumed by the index
-                - 1 bit is reserved for generation
-                - Handle 0 can be used only once, all other indices can be used twice
-        */
+        if (_freelist_length) {
+            const index = _freelist;
+            _freelist = _get_index(_handles[index]);
+            _freelist_length--;
+            return Handle(_get_generation_bits(_handles[index]) | index);
+        }
 
-        assert(0, "unimplemented");
+        return Handle();
     }
 
+    /**
+    Deallocates a valid handle, and invalidating it for the lifetime of the
+    handle pool.
+    */
     void deallocate(Handle handle) {
-        assert(0);
+        assert(is_valid(handle));
+
+        const index = _get_index(handle);
+        if (_increment_generation(_handles[index]) != ~_value_mask) {
+            _set_index(_handles[index], _freelist);
+            _freelist = index;
+            _freelist_length++;
+        }
     }
 
 private:
-    uint _get_index(uint value) {
-        return value & _value_mask;
+    void _init_handles(Handle[] handles) {
+        _handles = handles.ptr;
+        _num_handles = cast(uint) handles.length;
+        _value_mask = (1 << bits_to_store(_num_handles - 1)) - 1;
+
+        _freelist_length = _num_handles;
+        foreach_reverse (i, ref handle; _handles[0 .. _num_handles]) {
+            _set_index(handle, _freelist);
+            _freelist = cast(uint) i;
+        }
+
+        _increment_generation(_handles[0]);
+
     }
 
-    void _set_index(ref uint value, uint index) {
-        value = (value & ~_value_mask) | index;
+    uint _get_index(Handle handle) {
+        return handle.value & _value_mask;
     }
 
-    uint _get_generation(uint value) {
-        const generation_in_place = value & ~_value_mask;
-        return generation_in_place >> bits_to_store(_value_mask);
+    void _set_index(ref Handle handle, uint index) {
+        handle.value = (handle.value & ~_value_mask) | index;
     }
 
-    void _increment_generation(ref uint value) {
-        const generation = _get_generation(value) + 1;
+    uint _get_generation_bits(Handle handle) {
+        return handle.value & ~_value_mask;
+    }
+
+    uint _get_generation(Handle handle) {
+        return _get_generation_bits(handle) >> bits_to_store(_value_mask);
+    }
+
+    uint _increment_generation(ref Handle handle) {
+        const generation = (_get_generation(handle) + 1) << bits_to_store(_value_mask);
         // This wraps generation if it gets too large to fit!
-        value = (generation << bits_to_store(_value_mask)) | (value & _value_mask);
+        handle.value = generation | (handle.value & _value_mask);
+        return generation;
     }
 
     union Allocator {
@@ -132,10 +151,7 @@ private:
 
     Handle* _handles;
 
-    mixin(taggedPointer!(
-        Allocator*, "_allocator",
-        bool, "_is_tracked", 1
-    ));
+    mixin(taggedPointer!(Allocator*, "_allocator", bool, "_is_tracked", 1));
 
     uint _num_handles;
     uint _value_mask;
@@ -153,22 +169,22 @@ private:
         assert(pool1._value_mask == 0xFFF);
 
         const h1 = () {
-            uint v;
+            HandlePool.Handle v;
             pool1._set_index(v, 100);
             foreach (i; 0 .. 100)
                 pool1._increment_generation(v);
             return v;
-        } ();
+        }();
 
         assert(pool1._get_index(h1) == 100);
         assert(pool1._get_generation(h1) == 100);
 
         const h2 = () {
-            uint v;
+            HandlePool.Handle v;
             pool1._set_index(v, 4095);
             pool1._increment_generation(v);
             return v;
-        } ();
+        }();
 
         assert(pool1._get_index(h2) == 4095);
         assert(pool1._get_generation(h2) == 1);
@@ -180,11 +196,11 @@ private:
         assert(pool2._value_mask == uint.max >> 1);
 
         auto h1 = () {
-            uint v;
+            HandlePool.Handle v;
             pool2._set_index(v, 0);
             pool2._increment_generation(v);
             return v;
-        } ();
+        }();
 
         assert(pool2._get_generation(h1) == 1);
         pool2._increment_generation(h1);
@@ -192,105 +208,35 @@ private:
     }
 }
 
-// alias Handle4k = Handle!12;
+@("HandlePool: allocate(), deallocate()") unittest {
+    HandlePool.Handle[32] handles;
+    auto pool = HandlePool(handles);
 
-// 0b1111
-// static assert(Handle!12._index_bitmask == 0xF);
-// static assert(Handle!1_000_000._index_bitmask == 0xFFFFF);
+    HandlePool.Handle[32] test_handles;
 
-// struct Handle(uint max_instances) {
-//     alias IndexType = uint;
+    { // Fully allocate the pool
+        foreach (i, ref v; test_handles) {
+            v = pool.allocate();
+            assert(pool.is_valid(v));
+            assert(pool.index_of(v) == i);
+        }
 
-//     enum max_index = _index_bitmask;
-//     enum max_tracks = (_track_bitmask >> _index_bits) - 1;
+        // HandlePool.allocate() fails as expected
+        assert(pool.allocate() == HandlePool.Handle());
+    }
 
-//     IndexType index() const {
-//         return _value & _index_bitmask;
-//     }
+    { // Allocated handles are invalidated successfully
+        foreach (ref v; test_handles[]) {
+            pool.deallocate(v);
+            assert(!pool.is_valid(v));
+        }
+    }
 
-//     IndexType track() const {
-//         return _value >> _index_bits;
-//     }
-
-// private:
-//     enum IndexType _index_bits = bits_to_store(max_instances);
-
-//     enum IndexType _index_bitmask = (1 << _index_bits) - 1;
-//     enum IndexType _track_bitmask = ~_index_bitmask;
-
-//     void index(IndexType value) {
-//         _value = (_value & _track_bitmask) | value;
-//     }
-
-//     void track(IndexType value) {
-//         _value = (value << _index_bits) | _value;
-//     }
-
-//     IndexType _value;
-// }
-
-// alias H = HandlePool!32;
-
-// struct HandlePool(uint max_handles) {
-//     alias handle_t = Handle!max_handles;
-
-//     this(handle_t[] handles) {
-//         _handles = handles;
-//         _num_free_handles = num_handles();
-
-//         _freelist = handle_t.max_index;
-//         foreach (i, ref handle; _handles[0 .. _num_free_handles]) {
-//             handle.index = _freelist;
-//             _freelist = cast(handle_t.IndexType) i;
-//         }
-//     }
-
-//     /// The maximum number of handles this handle pool can hold
-//     uint num_handles() {
-//         return cast(uint) min(max_handles, _handles.length);
-//     }
-
-//     bool is_valid(handle_t handle) {
-//         // we only care that the track values match
-//         const generation_ok = _handles[handle.index].track == handle.track;
-//         assert(generation_ok || _handles[handle.index].index == 0);
-//         return generation_ok;
-//     }
-
-//     handle_t allocate_handle() {
-//         assert(_num_free_handles);
-
-//         const handle_index = _freelist;
-
-//         auto handle = _handles[handle_index];
-//         _freelist = handle.index;
-//         _num_free_handles--;
-
-//         handle.index = handle_index;
-//         return handle;
-//     }
-
-//     void deallocate_handle(handle_t handle) {
-//         assert(is_valid(handle));
-
-//         const handle_index = handle.index;
-
-//         // If the handle's generation hasn't been saturated yet, add it back to
-//         // the freelist
-//         if (_handles[handle_index].track < handle_t.max_tracks) {
-//             _handles[handle_index].index = _freelist;
-//             _freelist = handle_index;
-
-//             _num_free_handles++;
-//         }
-
-//         // Invalidate the handle
-//         _handles[handle_index].track = _handles[handle_index].track + 1;
-//     }
-
-// private:
-//     uint _freelist;
-//     uint _num_free_handles;
-
-//     handle_t[] _handles;
-// }
+    { // The full span of handles can be allocated again
+        foreach (i, ref v; test_handles) {
+            v = pool.allocate();
+            assert(pool.is_valid(v));
+            assert(pool.index_of(v) == test_handles.length - i - 1);
+        }
+    }
+}
