@@ -97,7 +97,7 @@ unittest {
 }
 
 struct UnmanagedArray(T) {
-        enum default_initial_size = 8;
+    enum default_initial_size = 8;
 
 nothrow public:
     this(ref IAllocator allocator, size_t initial_size = default_initial_size) {

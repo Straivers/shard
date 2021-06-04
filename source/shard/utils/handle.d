@@ -18,31 +18,31 @@ struct HandlePool {
     struct Handle {
         uint value;
 
-        bool opCast(T : bool)() const {
+        bool opCast(T : bool)() const nothrow {
             return value > 0;
         }
     }
 
-    this(size_t capacity, ref IAllocator allocator) {
+    this(size_t capacity, ref IAllocator allocator) nothrow {
         assert(capacity < (1 << 31), "Specified capacity greater than 2 ^ 31 element limit");
         _allocator.api = &allocator;
         _init_handles(allocator.make_array!Handle(capacity));
     }
 
-    this(size_t capacity, ref TrackedAllocator allocator) {
+    this(size_t capacity, ref TrackedAllocator allocator) nothrow {
         assert(capacity < (1 << 31), "Specified capacity greater than 2 ^ 31 element limit");
         _is_tracked = true;
         _allocator.tracked = &allocator;
         _init_handles(allocator.make_array!Handle(capacity));
     }
 
-    this(Handle[] handles) {
+    this(Handle[] handles) nothrow {
         assert(handles.length < (1 << 31), "Specified capacity greater than 2 ^ 31 element limit");
         handles[] = Handle();
         _init_handles(handles);
     }
 
-    ~this() {
+    ~this() nothrow {
         if (_allocator) {
             if (_is_tracked)
                 _allocator.tracked.dispose(_handles);
@@ -54,7 +54,7 @@ struct HandlePool {
     /**
     Checks if the handle is valid.
     */
-    bool is_valid(Handle handle) {
+    bool is_valid(Handle handle) nothrow {
         const index = _get_index(handle);
 
         return index < _num_handles && _get_generation(_handles[index]) == _get_generation(handle);
@@ -68,7 +68,7 @@ struct HandlePool {
 
     Returns: An index in the range [0, capacity).
     */
-    uint index_of(Handle handle) {
+    uint index_of(Handle handle) nothrow {
         assert(is_valid(handle));
         return _get_index(handle);
     }
@@ -79,7 +79,7 @@ struct HandlePool {
     Returns: A new opaque handle, or else Handle(0) if the pool has run out of
     handles.
     */
-    Handle allocate() {
+    Handle allocate() nothrow {
         if (_freelist_length) {
             const index = _freelist;
             _freelist = _get_index(_handles[index]);
@@ -94,7 +94,7 @@ struct HandlePool {
     Deallocates a valid handle, and invalidating it for the lifetime of the
     handle pool.
     */
-    void deallocate(Handle handle) {
+    void deallocate(Handle handle) nothrow {
         assert(is_valid(handle));
 
         const index = _get_index(handle);
@@ -106,7 +106,7 @@ struct HandlePool {
     }
 
 private:
-    void _init_handles(Handle[] handles) {
+    void _init_handles(Handle[] handles) nothrow {
         _handles = handles.ptr;
         _num_handles = cast(uint) handles.length;
         _value_mask = (1 << bits_to_store(_num_handles - 1)) - 1;
@@ -121,23 +121,23 @@ private:
 
     }
 
-    uint _get_index(Handle handle) {
+    uint _get_index(Handle handle) nothrow {
         return handle.value & _value_mask;
     }
 
-    void _set_index(ref Handle handle, uint index) {
+    void _set_index(ref Handle handle, uint index) nothrow {
         handle.value = (handle.value & ~_value_mask) | index;
     }
 
-    uint _get_generation_bits(Handle handle) {
+    uint _get_generation_bits(Handle handle) nothrow {
         return handle.value & ~_value_mask;
     }
 
-    uint _get_generation(Handle handle) {
+    uint _get_generation(Handle handle) nothrow {
         return _get_generation_bits(handle) >> bits_to_store(_value_mask);
     }
 
-    uint _increment_generation(ref Handle handle) {
+    uint _increment_generation(ref Handle handle) nothrow {
         const generation = (_get_generation(handle) + 1) << bits_to_store(_value_mask);
         // This wraps generation if it gets too large to fit!
         handle.value = generation | (handle.value & _value_mask);
