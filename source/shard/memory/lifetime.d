@@ -2,17 +2,14 @@ module shard.memory.lifetime;
 
 import core.checkedint : mulu;
 import core.lifetime : emplace;
-import std.algorithm : max, min;
+import shard.traits : object_size, PtrType;
+import std.algorithm : max;
 import std.traits : fullyQualifiedName, hasElaborateDestructor, hasMember;
 
-import shard.traits : PtrType, object_size;
-
 PtrType!T make(T, A, Args...)(auto ref A storage, Args args) nothrow {
-    // Support 0-size structs
-    void[] m = storage.allocate(max(object_size!T, 1));
+    // max(object_size!T, 1) to support 0-size types (void, especially)
+    void[] m = storage.allocate(max(object_size!T, 1), fullyQualifiedName!T);
     if (!m.ptr) return null;
-
-    // g_mem_tracker.record_allocate(storage, fullyQualifiedName!T, m);
 
     static if (is(T == class)) {
         return emplace!T(m, args);
@@ -26,7 +23,10 @@ PtrType!T make(T, A, Args...)(auto ref A storage, Args args) nothrow {
 
 T[] make_array(T, A)(auto ref A storage, size_t length) nothrow {
     auto t_array = make_raw_array!T(storage, length);
-    t_array[] = T.init;
+
+    static if (!is(T == void))
+        t_array[] = T.init;
+
     return t_array;
 }
 
@@ -35,16 +35,13 @@ T[] make_raw_array(T, A)(auto ref A storage, size_t length) nothrow {
         return null;
 
     bool overflow;
-    const size = mulu(T.sizeof, length, overflow);
-
+    const _ = mulu(T.sizeof, length, overflow);
     if (overflow)
-        return null;
+        assert(0, "Array size overflow!");
 
-    auto m = storage.allocate(size);
-    if (!m.ptr)
+    void[] m;
+    if (!storage.reallocate(m, T.sizeof, length, fullyQualifiedName!T))
         return null;
-
-    // g_mem_tracker.record_allocate(storage, fullyQualifiedName!T, m);
 
     return (() @trusted => cast(T[]) m)();
 }
@@ -53,10 +50,7 @@ void dispose(T, A)(auto ref A storage, auto ref T* p) nothrow {
     static if (hasElaborateDestructor!T)
         destroy(*p);
 
-    // void[] memory = (cast(void*) p)[0 .. T.sizeof];
-    // g_mem_tracker.record_deallocate(storage, fullyQualifiedName!T, memory);
-
-    storage.deallocate((cast(void*) p)[0 .. T.sizeof]);
+    storage.deallocate((cast(void*) p)[0 .. T.sizeof], fullyQualifiedName!T);
 
     static if (__traits(isRef, p))
         p = null;
@@ -72,25 +66,19 @@ if (is(T == class) || is(T == interface)) {
 
     auto support = (cast(void*) ob)[0 .. typeid(ob).initializer.length];
 
-    // g_mem_tracker.record_deallocate(storage, fullyQualifiedName!T, support);
-
     destroy(p);
-    storage.deallocate(support);
+    storage.deallocate(support, fullyQualifiedName!T);
 
     static if (__traits(isRef, p))
         p = null;
-
-    storage.deallocate(support, file, line);
 }
 
 void dispose(T, A)(auto ref A storage, auto ref T[] p) nothrow {
     static if (hasElaborateDestructor!(typeof(p[0])))
         foreach (ref e; p)
             destroy(e);
-    
-    // g_mem_tracker.record_deallocate(storage, fullyQualifiedName!T, cast(void[]) p);
 
-    storage.deallocate(cast(void[]) p);
+    storage.deallocate(cast(void[]) p, fullyQualifiedName!T);
 
     static if (__traits(isRef, p))
         p = null;
@@ -114,10 +102,8 @@ bool resize_array(T, A)(auto ref A storage, ref T[] array, size_t length) nothro
 
     bool do_resize() {
         void[] array_ = array;
-        if (!storage.reallocate(array_, T.sizeof * length))
+        if (!storage.reallocate(array_, T.sizeof, length, fullyQualifiedName!T))
             return false;
-
-        // g_mem_tracker.record_reallocate(storage, fullyQualifiedName!T, array, array_);
 
         array = cast(T[]) array_;
         return true;

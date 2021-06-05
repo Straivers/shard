@@ -12,12 +12,23 @@ public import std.typecons : Ternary;
 struct IAllocator {
     @disable this(this);
 
+    enum no_name = "unknown";
+
+    nothrow {
+        alias Self = void*;
+        alias AlignmentFn = size_t function(const Self);
+        alias OptimalSizeFn = size_t function(const Self, size_t);
+        alias AllocateFn = void[]function(Self, size_t, string name = no_name);
+        alias DeallocateFn = void function(Self, void[], string name = no_name);
+        alias ReallocateFn = bool function(Self, ref void[], size_t, size_t, string name = no_name);
+    }
+
     void* instance;
-    size_t function(const void*) nothrow                alignment_fn;
-    size_t function(const void*, size_t) nothrow        optimal_size_fn;
-    void[] function(void*, size_t) nothrow              allocate_fn;
-    void function(void*, void[]) nothrow                deallocate_fn;
-    bool function(void*, ref void[], size_t) nothrow    reallocate_fn;
+    AlignmentFn alignment_fn;
+    OptimalSizeFn optimal_size_fn;
+    AllocateFn allocate_fn;
+    DeallocateFn deallocate_fn;
+    ReallocateFn reallocate_fn;
 
     static assert(typeof(this).sizeof == 48);
 
@@ -41,8 +52,8 @@ struct IAllocator {
         A block of `size` bytes of memory or `null` if out of memory or `size`
         = 0.
     */
-    void[] allocate(size_t size) nothrow {
-        return allocate_fn(instance, size);
+    void[] allocate(size_t size, string name = no_name) nothrow {
+        return allocate_fn(instance, size, name);
     }
 
     /**
@@ -52,13 +63,13 @@ struct IAllocator {
         memory      = A block of memory previously allocated by `allocate()` or
                       `resize()`.
     */
-    void deallocate(void[] block) nothrow {
-        deallocate_fn(instance, block);
+    void deallocate(void[] block, string name = no_name) nothrow {
+        deallocate_fn(instance, block, name);
     }
 
     /// ditto
-    void deallocate(ref void[] block) nothrow {
-        deallocate_fn(instance, block);
+    void deallocate(ref void[] block, string name = no_name) nothrow {
+        deallocate_fn(instance, block, name);
         block = null;
     }
 
@@ -72,13 +83,13 @@ struct IAllocator {
 
     Params:
         memory      = The memory block to resize. May be `null`.
-        size        = The size of the memory block after `reallocate()` returns.
-                      May be 0.
+        size        = The size of each sub-unit in the memory block.
+        count       = The number of sub-units to be in the resized block.
 
     Returns: `true` if `memory` was resized, `false` otherwise.
     */
-    bool reallocate(ref void[] block, size_t size) nothrow {
-        return reallocate_fn ? reallocate_fn(instance, block, size) : false;
+    bool reallocate(ref void[] memory, size_t size, size_t count, string name = no_name) nothrow {
+        return reallocate_fn ? reallocate_fn(instance, memory, size, count, name) : false;
     }
 
     auto make(T, Args...)(auto ref Args args) {
@@ -150,21 +161,21 @@ version (unittest) {
         void[] m1;
 
         // Reallocation as allocation
-        allocator.reallocate(m1, 23);
+        allocator.reallocate(m1, 1, 23);
         assert(m1);
         assert(m1.length == 23);
 
         auto p1 = m1.ptr;
-        allocator.reallocate(m1, 23);
+        allocator.reallocate(m1, 1, 23);
         assert(m1.length == 23);
         assert(m1.ptr == p1);
 
         // Reallocation as resize down
-        assert(allocator.reallocate(m1, 1));
+        assert(allocator.reallocate(m1, 1, 1));
         assert(m1.length == 1);
 
         // Reallocation as resize up
-        assert(allocator.reallocate(m1, 12));
+        assert(allocator.reallocate(m1, 1, 12));
         assert(m1.length == 12);
 
         {
@@ -172,18 +183,18 @@ version (unittest) {
             m2 = allocator.allocate(20);
 
             // Grow not-most-recent allocation
-            allocator.reallocate(m1, 64);
+            allocator.reallocate(m1, 1, 64);
             assert(m1.length == 64);
 
             // Shrink not-most-recent allocation
-            allocator.reallocate(m2, 1);
+            allocator.reallocate(m2, 1, 1);
             assert(m2.length == 1);
 
             allocator.deallocate(m2);
         }
 
         // Reallocation as deallocation
-        assert(allocator.reallocate(m1, 0));
+        assert(allocator.reallocate(m1, 1, 0));
         assert(m1 == null);
     }
 }

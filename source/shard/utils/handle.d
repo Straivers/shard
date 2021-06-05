@@ -1,7 +1,7 @@
 module shard.utils.handle;
 
 import shard.memory.allocators.api : IAllocator;
-import shard.memory.tracker : TrackedAllocator;
+// import shard.memory.tracker : TrackedAllocator;
 import shard.traits : bits_to_store;
 import std.bitmanip : taggedPointer;
 
@@ -29,12 +29,12 @@ struct HandlePool {
         _init_handles(allocator.make_array!Handle(capacity));
     }
 
-    this(size_t capacity, ref TrackedAllocator allocator) nothrow {
-        assert(capacity < (1 << 31), "Specified capacity greater than 2 ^ 31 element limit");
-        _is_tracked = true;
-        _allocator.tracked = &allocator;
-        _init_handles(allocator.make_array!Handle(capacity));
-    }
+    // this(size_t capacity, ref TrackedAllocator allocator) nothrow {
+    //     assert(capacity < (1 << 31), "Specified capacity greater than 2 ^ 31 element limit");
+    //     _is_tracked = true;
+    //     _allocator.tracked = &allocator;
+    //     _init_handles(allocator.make_array!Handle(capacity));
+    // }
 
     this(Handle[] handles) nothrow {
         assert(handles.length < (1 << 31), "Specified capacity greater than 2 ^ 31 element limit");
@@ -44,9 +44,9 @@ struct HandlePool {
 
     ~this() nothrow {
         if (_allocator) {
-            if (_is_tracked)
-                _allocator.tracked.dispose(_handles);
-            else
+            // if (_is_tracked)
+            //     _allocator.tracked.dispose(_handles);
+            // else
                 _allocator.api.dispose(_handles);
         }
     }
@@ -146,7 +146,7 @@ private:
 
     union Allocator {
         IAllocator* api;
-        TrackedAllocator* tracked;
+        // TrackedAllocator* tracked;
     }
 
     Handle* _handles;

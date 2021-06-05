@@ -12,13 +12,11 @@ import shard.utils.table : HashTable;
 import std.algorithm : move, min;
 import std.bitmanip : bitfields;
 import std.traits : fullyQualifiedName;
-
+/*
 alias ScopeId = HandlePool.Handle;
 
 struct MemoryTracker {
     enum default_max_tracking_scopes = 256;
-    enum max_scope_name_length = ubyte.max;
-    enum max_type_name_length = ushort.max;
 
 public:
     this(IAllocator root, size_t max_scopes = default_max_tracking_scopes) {
@@ -84,12 +82,13 @@ public:
 
 private:
     static struct Scope {
-        static assert(typeof(this).sizeof == 12);
+        static assert(typeof(this).sizeof == 20);
 
         bool is_in_use;
+        mixin pad_bytes!3;
 
-        ubyte name_offset;
-        ushort name_length;
+        uint name_offset;
+        uint name_length;
         
         uint num_allocations;
         
@@ -97,16 +96,16 @@ private:
     }
 
     static struct Type {
-        static assert(max_type_name_length == name_length.max);
-        static assert(typeof(this).sizeof == 16);
+        static assert(typeof(this).sizeof == 20);
 
         Hash32 id;
 
-        ushort name_offset;
-        ushort name_length;
+        uint name_offset;
+        uint name_length;
 
         ushort size;
         mixin pad_bytes!2;
+
         uint num_allocations;
 
         static Hash32 hash(ref Type tt) nothrow {
@@ -140,11 +139,11 @@ private:
             return tt;
         }
         else {
-            const name_length = cast(ushort) min(t_name.length, max_type_name_length);
+            const name_length = cast(typeof(Type.name_length)) t_name.length;
             const name_offset = _name_storage.push_back(_root, cast(char[]) t_name[0 .. name_length]);
-            assert(name_offset < Type.name_offset.max, "Name storage too large, max 65536 characters");
+            assert(name_offset < Type.name_offset.max, "Name storage too large, max 2 ^ 32 characters!");
 
-            auto type = Type(type_id, cast(ushort) name_offset, name_length, object_size!T);
+            auto type = Type(type_id, cast(typeof(Type.name_offset)) name_offset, name_length, object_size!T);
             return _tracked_types.insert(type_id, type, _root);
         }
     }
@@ -188,38 +187,38 @@ struct TrackedAllocator {
 
     PtrType!T make(T, Args...)(auto ref Args args) nothrow {
         auto p = _base.make!T(args);
-        // if (p)
-        //     _tracker.register_allocation(0, memory);
+        if (p)
+            _tracker.register_allocation(_tracker_scope, memory);
         return p;
     }
 
     T[] make_array(T)(size_t length) nothrow {
         auto a = _base.make_array!T(length);
-        // if (a)
-        //     _tracker.register_array_allocation(0, a);
+        if (a)
+            _tracker.register_array_allocation!T(_tracker_scope, a);
         return a;
     }
 
     T[] make_raw_array(T)(size_t length) nothrow {
         auto a = _base.make_raw_array!T(length);
-        // if (a)
-        //     _tracker.register_array_allocation(0, a);
+        if (a)
+            _tracker.register_array_allocation(_tracker_scope, a);
         return a;
     }
 
     void dispose(T)(auto ref T* p) nothrow {
         _base.dispose(p);
-        // _tracker.register_deallocation(0, p);
+        _tracker.register_deallocation!T(_tracker_scope, p);
     }
 
     void dispose(T)(auto ref T p) nothrow if (is(T == class) || is(T == interface)) {
         _base.dispose(p);
-        // _tracker.register_deallocation(0, p);
+        _tracker.register_deallocation(_tracker_scope, p);
     }
 
     void dispose(T)(auto ref T[] p) nothrow {
         _base.dispose(p);
-        // _tracker.register_array_deallocation(0, p);
+        _tracker.register_array_deallocation(_tracker_scope, p);
     }
 
     bool resize_array(T)(ref T[] array, size_t length) nothrow {
@@ -236,19 +235,19 @@ struct TrackedAllocator {
 
 private:
     static size_t allocator_api_alignment(const void* self) nothrow {
-        return (cast(TrackedAllocator*) self)._base.alignment();
+        return (cast(const typeof(this)*) self)._base.alignment();
     }
 
-    static void[] allocator_api_allocate(void* self, size_t size) nothrow {
-        return (cast(TrackedAllocator*) self).make_raw_array!(void[])(size);
+    static void[] allocator_api_allocate(void* self, size_t size, string name) nothrow {
+        return (cast(typeof(this)*) self).make_array!void(size);
     }
 
-    static void allocator_api_deallocate(void* self, void[] memory) nothrow {
-        return (cast(TrackedAllocator*) self).dispose(memory);
+    static void allocator_api_deallocate(void* self, void[] block, string name) nothrow {
+        return (cast(typeof(this)*) self).dispose(block);
     }
 
-    static bool allocator_api_reallocate(void* self, ref void[] memory, size_t new_size) nothrow {
-        return (cast(TrackedAllocator*) self).resize_array(memory, new_size);
+    static bool allocator_api_reallocate(void* self, ref void[] block, size_t size, size_t count, string name) nothrow {
+        return (cast(typeof(this)*) self).resize_array(block, size * count);
     }
 
     IAllocator* _base;
@@ -260,3 +259,4 @@ private:
     
     static assert(typeof(this).sizeof == 24);
 }
+*/

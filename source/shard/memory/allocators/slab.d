@@ -93,19 +93,19 @@ private:
     }
 
     static size_t allocator_api_alignment(const void* self) nothrow {
-        return (cast(const Slab*) self).alignment();
+        return (cast(const typeof(this)*) self).alignment();
     }
 
-    static void[] allocator_api_allocate(void* self, size_t size) nothrow {
-        return (cast(Slab*) self).allocate(size);
+    static void[] allocator_api_allocate(void* self, size_t size, string name) nothrow {
+        return (cast(typeof(this)*) self).allocate(size);
     }
 
-    static void allocator_api_deallocate(void* self, void[] block) nothrow {
-        return (cast(Slab*) self).deallocate(block);
+    static void allocator_api_deallocate(void* self, void[] block, string name) nothrow {
+        return (cast(typeof(this)*) self).deallocate(block);
     }
 
-    static bool allocator_api_reallocate(void* self, ref void[] block, size_t size) nothrow {
-        return (cast(Slab*) self).reallocate(block, size);
+    static bool allocator_api_reallocate(void* self, ref void[] block, size_t size, size_t count, string name) nothrow {
+        return (cast(typeof(this)*) self).reallocate(block, size * count);
     }
 
     bool _owns(void[] memory) {
