@@ -1,200 +1,223 @@
 module shard.memory.allocators.api;
 
-import shard.math : round_to_next;
-import shard.memory.lifetime;
+import core.lifetime : emplace, forward;
+import shard.traits : object_size, PtrType;
+import std.traits : fullyQualifiedName, hasElaborateDestructor, hasMember;
 
-public import std.typecons : Ternary;
+alias length_t = size_t;
 
-/** 
- * IAllocator provides a uniform interface for accessing custom allocators and
- * sub-allocators.
- */
-struct IAllocator {
-    @disable this(this);
+/**
+Yes, we are using an interface. The key reasoning being that we expect allocator
+use to be fairly consistent, with only a few in existence at any time.
 
-    enum no_name = "unknown";
+If you only have a few allocators and allocate memory in large chunks outside of
+tight loops, the performance impact should be minimal. In return, we gain
+significant flexibility in how we can choose to implement new allocators and
+insert them with no change to the rest of the codebase.
+*/
+interface Allocator {
+    enum no_name = "no_name";
 
-    nothrow {
-        alias Self = void*;
-        alias AlignmentFn = size_t function(const Self);
-        alias OptimalSizeFn = size_t function(const Self, size_t);
-        alias AllocateFn = void[]function(Self, size_t, string name = no_name);
-        alias DeallocateFn = void function(Self, void[], string name = no_name);
-        alias ReallocateFn = bool function(Self, ref void[], size_t, size_t, string name = no_name);
-    }
-
-    void* instance;
-    AlignmentFn alignment_fn;
-    OptimalSizeFn optimal_size_fn;
-    AllocateFn allocate_fn;
-    DeallocateFn deallocate_fn;
-    ReallocateFn reallocate_fn;
-
-    static assert(typeof(this).sizeof == 48);
-
-    /// The minimum alignment for all allocations.
-    size_t alignment() const nothrow {
-        return alignment_fn(instance);
-    }
-
-    /// Returns a size >= `size` that reduces internal fragmentation.
-    size_t optimal_size(size_t size) const nothrow {
-        return optimal_size_fn ? optimal_size_fn(instance, size) : round_to_next(size, alignment);
-    }
+@safe nothrow:
 
     /**
-    Allocates `size` bytes of memory. Returns `null` if out of memory.
+    Allocates `size` bytes of memory.
 
     Params:
-        size        = The number of bytes to allocate. Must not be 0.
-
-    Returns:
-        A block of `size` bytes of memory or `null` if out of memory or `size`
-        = 0.
+        size            = The size of the object to allocate.
+        name            = An identifier used to enable tracking of the
+                          allocation.
     */
-    void[] allocate(size_t size, string name = no_name) nothrow {
-        return allocate_fn(instance, size, name);
-    }
+    void[] allocate(size_t size, string name = no_name);
 
     /**
-    Returns `memory` to the allocator.
+    Deallocates block of memory.
 
     Params:
-        memory      = A block of memory previously allocated by `allocate()` or
-                      `resize()`.
+        memory          = The block of memory to deallocate.
+        name            = The same identifier used 
     */
-    void deallocate(void[] block, string name = no_name) nothrow {
-        deallocate_fn(instance, block, name);
-    }
-
-    /// ditto
-    void deallocate(ref void[] block, string name = no_name) nothrow {
-        deallocate_fn(instance, block, name);
-        block = null;
-    }
+    void deallocate(void[] memory);
 
     /**
-    Attempts to resize `memory`. If `memory.length = size`, this function is a
-    no-op.
+    Resizes an array. It may allocate a new region of memory and copy the old
+    elements to it.
+
+    Note that two special cases apply when calling `reallocate_array()`:
+    * If `memory` is empty and `new_length > 0`, a new array will be dynamically
+      allocated.
+    * If `memory` is not empty, and `new_length` is 0, the array will be
+      deallocated.
+
+    Params:
+        memory          = The array to be resized. May be empty (`[]`).
+        element_size    = The size of each element in the array. Must be at
+                          least 1, and must not change for the lifetime of the
+                          array.
+        new_length      = The length of the array after resizing. May be 0.
+        name            = An identifier used to enable tracking of the
+                          allocation. Must not change for the lifetime of the
+                          array.
     
-    If `memory` is `null` and `size` > 0, `reallocate()` acts as `allocate()`.
+    Returns: The resized array, or `[]` if reallocation failed.
+    */
+    void[] reallocate_array(void[] memory, size_t element_size, length_t new_length, string name = no_name);
 
-    If `memory` is not `null` and `size` = 0, `reallocate()` acts as `deallocate()`.
+public:
+
+    /**
+    Dynamically allocates memory from the allocator then constructs an object of
+    type `T` in that memory, with any provided arguments.
 
     Params:
-        memory      = The memory block to resize. May be `null`.
-        size        = The size of each sub-unit in the memory block.
-        count       = The number of sub-units to be in the resized block.
+        args            = Any arguments required for the construction of the
+                          object
 
-    Returns: `true` if `memory` was resized, `false` otherwise.
+    Returns: A reference (class) or pointer (everything else) to the initialized
+    object.
     */
-    bool reallocate(ref void[] memory, size_t size, size_t count, string name = no_name) nothrow {
-        return reallocate_fn ? reallocate_fn(instance, memory, size, count, name) : false;
+    PtrType!T make(T, Args...)(auto ref Args args) {
+        // max(object_size!T, 1) to support 0-size types (void, especially)
+        const size = object_size!T > 1 ? object_size!T : 1;
+
+        void[] m = allocate(size, fullyQualifiedName!T);
+        if (!m.ptr) return null;
+
+        static if (is(T == class)) {
+            return emplace!T(m, forward!args);
+        }
+        else {
+            auto p = (() @trusted => cast(T*) m.ptr)();
+            emplace!T(p, forward!args);
+            return p;
+        }
     }
 
-    auto make(T, Args...)(auto ref Args args) {
-        return shard.memory.lifetime.make!T(this, args);
-    }
+    /**
+    Dynamically allocates memory for a `length`-element array of type `T`. All
+    elements are initialized to their default value.
 
-    auto make_array(T)(size_t length) {
-        return shard.memory.lifetime.make_array!T(this, length);
-    }
+    Params:
+        length          = The length of the array to create.
 
-    auto make_raw_array(T)(size_t length) {
-        return shard.memory.lifetime.make_raw_array!T(this, length);
-    }
+    Returns: The newly created array, or `null` if `length` was 0 or allocation failed.
+    */
+    T[] make_array(T)(length_t length) {
+        if (!length)
+            return null;
 
-    void dispose(T)(auto ref T* p) {
-        shard.memory.lifetime.dispose(this, p);
-    }
+        if (auto array = reallocate_array([], T.sizeof, length, fullyQualifiedName!T)) {
+            auto t_array = (() @trusted => cast(T[]) array)();
 
-    void dispose(T)(auto ref T p) if (is(T == class) || is(T == interface)) {
-        shard.memory.lifetime.dispose(this, p);
-    }
+            static if (!is(T == void))
+                t_array[] = T.init;
 
-    void dispose(T)(auto ref T[] array) {
-        shard.memory.lifetime.dispose(this, array);
-    }
-
-    bool resize_array(T)(ref T[] array, size_t length) nothrow {
-        return shard.memory.lifetime.resize_array(this, array, length);
-    }
-}
-
-version (unittest) {
-    void test_allocate_api(ref IAllocator allocator) {
-        auto m1 = allocator.allocate(0);
-        assert(m1 == null);
-
-        allocator.deallocate(m1); // must not crash
-
-        auto m2 = allocator.allocate(8);
-        assert(m2.length == 8);
-        assert(allocator.optimal_size(8) >= 8);
-        assert((cast(size_t) m2.ptr) % allocator.alignment == 0);
-
-        auto m3 = allocator.allocate(13);
-        assert(m3.length == 13);
-        assert(allocator.optimal_size(13) >= 13);
-        assert((cast(size_t) m3.ptr) % allocator.alignment == 0);
-
-        auto m4 = allocator.allocate(21);
-        assert(m4.length == 21);
-        assert(allocator.optimal_size(21) >= 21);
-        assert((cast(size_t) m4.ptr) % allocator.alignment == 0);
-
-        allocator.deallocate(m4);
-        assert(m4 == null);
-
-        auto m5 = allocator.allocate(34);
-        assert(m5.length == 34);
-        assert(allocator.optimal_size(34) >= 34);
-        assert((cast(size_t) m5.ptr) % allocator.alignment == 0);
-
-        allocator.deallocate(m2);
-        allocator.deallocate(m3);
-        allocator.deallocate(m4);
-        allocator.deallocate(m5);
-    }
-
-    void test_resize_api(ref IAllocator allocator) {
-        void[] m1;
-
-        // Reallocation as allocation
-        allocator.reallocate(m1, 1, 23);
-        assert(m1);
-        assert(m1.length == 23);
-
-        auto p1 = m1.ptr;
-        allocator.reallocate(m1, 1, 23);
-        assert(m1.length == 23);
-        assert(m1.ptr == p1);
-
-        // Reallocation as resize down
-        assert(allocator.reallocate(m1, 1, 1));
-        assert(m1.length == 1);
-
-        // Reallocation as resize up
-        assert(allocator.reallocate(m1, 1, 12));
-        assert(m1.length == 12);
-
-        {
-            void[] m2;
-            m2 = allocator.allocate(20);
-
-            // Grow not-most-recent allocation
-            allocator.reallocate(m1, 1, 64);
-            assert(m1.length == 64);
-
-            // Shrink not-most-recent allocation
-            allocator.reallocate(m2, 1, 1);
-            assert(m2.length == 1);
-
-            allocator.deallocate(m2);
+            return t_array;
         }
 
-        // Reallocation as deallocation
-        assert(allocator.reallocate(m1, 1, 0));
-        assert(m1 == null);
+        return null;
+    }
+
+    /**
+    Resizes an array to `new_length` elements.
+
+    Note that two special cases apply when calling `resize_array()`:
+    * If `array` is empty and `new_length > 0`, a new array will be dynamically
+      allocated.
+    * If `array` is not empty, and `new_length` is 0, the array will be
+      deallocated.
+
+    Params:
+        array           = The array to be resized. May be `null`.
+        new_length      = The length of the array after resizing. May be `0`.
+    */
+    bool resize_array(T)(ref T[] array, length_t new_length) {
+        static assert(!hasMember!(T, "opPostMove"), "Move construction on array reallocation not supported!");
+        assert(T.sizeof * new_length >= new_length, "Getting size of array overflows size_t!");
+
+        @safe bool do_resize() {
+            if (auto memory = reallocate_array(array, T.sizeof, new_length, fullyQualifiedName!T)) {
+                array = (() @trusted => cast(T[]) memory)();
+                return true;
+            }
+
+            return false;
+        }
+
+        if (new_length == array.length)
+            return true;
+
+        if (new_length < array.length) {
+            static if (hasElaborateDestructor!T)
+                foreach (ref object; array[new_length .. $])
+                    destroy(object);
+
+            return do_resize();
+        }
+        else {
+            const old_length = array.length;
+
+            if (!do_resize())
+                return false;
+
+            static if (is(typeof(array[] = T.init)))
+                array[old_length .. $] = T.init;
+            else
+                foreach (ref e; array[old_length .. $])
+                    e = T.init;
+
+            return true;
+        }
+    }
+
+    /**
+    Destroys and deallocates the object pointed to by pointer, a `class` or
+    `interface` reference, or an array.
+
+    Disposing of an array will trigger the destructor for every element in the
+    array.
+
+    Params:
+        p               = The object or array to be destroyed.
+    */
+    void dispose(T)(auto ref T* p) {
+        static if (hasElaborateDestructor!T)
+            destroy(*p);
+
+        deallocate((() @trusted => (cast(void*) p)[0 .. T.sizeof])());
+
+        static if (__traits(isRef, p))
+            p = null;
+    }
+
+    /// Ditto
+    void dispose(T)(auto ref T p)
+    if (is(T == class) || is(T == interface)) {
+        
+        static if (is(T == interface))
+            auto ob = cast(Object) p;
+        else
+            alias ob = p;
+
+        auto support = (cast(void*) ob)[0 .. typeid(ob).initializer.length];
+
+        destroy(p);
+        deallocate(support);
+
+        static if (__traits(isRef, p))
+            p = null;
+    }
+
+    /// Ditto
+    void dispose(T)(auto ref T[] p) {
+        static if (hasElaborateDestructor!(typeof(p[0])))
+            foreach (ref e; p)
+                destroy(e);
+
+        void[] m = (() @trusted => cast(void[]) p)();
+        reallocate_array(m, T.sizeof, 0, fullyQualifiedName!T);
+
+        static if (__traits(isRef, p))
+            p = null;
     }
 }

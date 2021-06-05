@@ -6,114 +6,70 @@ import shard.memory.values: platform_alignment;
 
 import core.stdc.stdlib: malloc, free, realloc;
 
-struct SystemAllocator {
-public:
-    /// Retrieves a compliant IAllocator interface.
-    ref IAllocator allocator_api() return nothrow {
-        if (_allocator_api == IAllocator())
-            _allocator_api = IAllocator(
-                &this,
-                &allocator_api_alignment,
-                null,
-                &allocator_api_allocate,
-                &allocator_api_deallocate,
-                &allocator_api_reallocate,
-            );
+class SystemAllocator : Allocator {
+@safe nothrow:
 
-        return _allocator_api;
-    }
-
-    /// The minimum alignment for all allocations.
-    size_t alignment() const nothrow {
-        return platform_alignment;
-    }
-
-    /**
-    Allocates `size` bytes of memory. Returns `null` if out of memory.
-
-    Params:
-        size        = The number of bytes to allocate. Must not be 0.
-    
-    Returns:
-        A block of `size` bytes of memory or `null` if out of memory or `size`
-        = 0.
-    */
-    void[] allocate(size_t size) nothrow {
+    void[] allocate(size_t size, string name = no_name) {
         if (size == 0)
             return null;
 
-        auto m = malloc(size);
-        return m ? m[0 .. size] : null;
+        auto m = (() @trusted => malloc(size))();
+        return m ? (() @trusted => m[0 .. size])() : null;
     }
 
-    /**
-    Returns `memory` to the allocator.
-
-    Params:
-        memory      = A block of memory previously allocated by `allocate()` or
-                      `resize()`.
-    */
-    void deallocate(void[] block) nothrow {
-        if (block)
-            free(block.ptr);
+    void deallocate(void[] block) {
+        () @trusted { free(block.ptr); } ();
     }
 
-    /**
-    Attempts to resize `memory`. If `memory.length = size`, this function is a
-    no-op.
-    
-    If `memory` is `null` and `size` > 0, `reallocate()` acts as `allocate()`.
-
-    If `memory` is not `null` and `size` = 0, `reallocate()` acts as `deallocate()`.
-
-    Params:
-        memory      = The memory block to resize. May be `null`.
-        size        = The size of the memory block after `reallocate()` returns.
-                      May be 0.
-
-    Returns: `true` if `memory` was resized, `false` otherwise.
-    */
-    bool reallocate(ref void[] memory, size_t size) nothrow {
+    void[] reallocate_array(void[] memory, size_t element_size, length_t length, string name = no_name) {
+        const size = element_size * length;
         if (memory && size == 0) {
-            free(memory.ptr);
-            memory = null;
-            return true;
+            (() @trusted => free(memory.ptr))();
+            return [];
         }
 
         if (memory.length == size)
-            return true;
+            return memory;
 
-        if (auto p = realloc(memory.ptr, size)) {
-            memory = p[0 .. size];
-            return true;
+        if (auto p = (() @trusted => realloc(memory.ptr, size))()) {
+            return (() @trusted => p[0 .. size])();
         }
 
-        return false;
+        return [];
     }
-
-private:
-    static size_t allocator_api_alignment(const void* self) nothrow {
-        return (cast(const typeof(this)*) self).alignment();
-    }
-
-    static void[] allocator_api_allocate(void* self, size_t size, string name) nothrow {
-        return (cast(typeof(this)*) self).allocate(size);
-    }
-
-    static void allocator_api_deallocate(void* self, void[] block, string name) nothrow {
-        return (cast(typeof(this)*) self).deallocate(block);
-    }
-
-    static bool allocator_api_reallocate(void* self, ref void[] block, size_t size, size_t count, string name) nothrow {
-        return (cast(typeof(this)*) self).reallocate(block, size * count);
-    }
-
-    IAllocator _allocator_api;
 }
 
-@("SystemAllocator IAllocator compliance")
-unittest {
-    SystemAllocator sa;
-    test_allocate_api(sa.allocator_api());
-    test_resize_api(sa.allocator_api());
+@("SystemAllocator: interface compliance") unittest {
+    scope mem = new SystemAllocator;
+
+    void[] a;
+    a = mem.reallocate_array(a, 1, 20);
+    assert(a);
+    assert(a.length == 20);
+
+    a = mem.reallocate_array(a, 1, 30);
+    assert(a);
+    assert(a.length == 30);
+
+    a = mem.reallocate_array(a, 1, 10);
+    assert(a);
+    assert(a.length == 10);
+
+    a = mem.reallocate_array(a, 1, 0);
+    assert(!a);
+}
+
+@("SystemAllocator: make_array(), resize_array(), dispose(array)") unittest {
+    scope mem = new SystemAllocator;
+
+    auto a1 = mem.make_array!int(20);
+    assert(a1);
+    assert(a1.length == 20);
+
+    assert(mem.resize_array(a1, 10));
+    assert(a1);
+    assert(a1.length == 10);
+
+    mem.dispose(a1);
+    assert(!a1);
 }

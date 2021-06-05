@@ -1,7 +1,7 @@
 module shard.utils.set;
 
 import shard.hash : Hash;
-import shard.memory.allocators.api : IAllocator;
+import shard.memory.allocators.api : Allocator;
 import shard.utils.table : HashTable;
 import std.traits : ReturnType;
 import std.algorithm : move;
@@ -21,16 +21,16 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
         return _impl.contains(value_hasher(entry));
     }
 
-    void reset(ref IAllocator allocator) nothrow {
+    void reset(Allocator allocator) nothrow {
         _impl.reset(allocator);
     }
 
-    Value* insert(Value value, ref IAllocator allocator) nothrow {
+    Value* insert(Value value, Allocator allocator) nothrow {
         auto entry = Entry(value_hasher(value), move(value));
         return &_impl.insert(entry.key, entry, allocator).value;
     }
 
-    bool remove(Value value, ref IAllocator allocator) nothrow {
+    bool remove(Value value, Allocator allocator) nothrow {
         return _impl.remove(value_hasher(value), allocator);
     }
 
@@ -51,7 +51,7 @@ private:
     import shard.memory.allocators.system : SystemAllocator;
     import std.random : uniform;
 
-    SystemAllocator mem;
+    scope mem = new SystemAllocator();
     HashSet!(Hash!32) set;
 
     alias Unit = void[0];
@@ -63,13 +63,13 @@ private:
     assert(set.size() == 0);
 
     foreach (v; hashes.byKey)
-        set.insert(v, mem.allocator_api());
+        set.insert(v, mem);
 
     assert(!set.is_empty());
     assert(set.size() == 1_000);
 
     foreach (v; hashes.byKey)
-        assert(set.remove(v, mem.allocator_api()));
+        assert(set.remove(v, mem));
 
     foreach (v; hashes.byKey)
         assert(!set.contains(v));
@@ -77,5 +77,5 @@ private:
     assert(set.is_empty());
     assert(set.size() == 0);
 
-    set.reset(mem.allocator_api());
+    set.reset(mem);
 }

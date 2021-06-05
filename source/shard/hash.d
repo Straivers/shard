@@ -32,38 +32,35 @@ struct Hash(size_t N : 32) {
         IntType int_value;
     }
 
-    this(ubyte[] v) nothrow {
+@safe nothrow:
+
+    this(ubyte[] v) {
         bytes[] = v[0 .. bytes.sizeof];
     }
 
-    this(IntType v) nothrow {
+    this(IntType v) {
         int_value = v;
     }
 
-    pragma(inline, true)
-    static Hash of(T : Hash)(T hash) nothrow {
+    static @safe Hash of(T : Hash)(T hash) {
         return hash;
     }
 
-    pragma(inline, true)
-    static Hash of(T : const(char)[])(T str) nothrow {
+    static @safe Hash of(T : const(char)[])(T str) {
         return Hash(digest!Hasher(str)[0 .. hash_bytes]);
     }
 
-    pragma(inline, true)
-    static Hash of(T)(T p) nothrow if (isPointer!T) {
+    static @trusted Hash of(T)(T p) if (isPointer!T) {
         enum size_t shift = ilog2(1 + T.alignof);
         const v8 = (cast(size_t) p) >> shift;
         return Hash((cast(ubyte*) &v8)[0 .. hash_bytes]);
     }
 
-    pragma(inline, true)
-    static Hash of(T)(T i) nothrow if (isIntegral!T) {
+    static @safe Hash of(T)(T i) if (isIntegral!T) {
         return Hash(cast(IntType) i);
     }
 
-    pragma(inline, true)
-    static Hash of(T)(auto ref T t) nothrow if (hasMember!(T, "hash_of")) {
+    static @safe Hash of(T)(auto ref T t) if (hasMember!(T, "hash_of")) {
         return t.hash_of();
     }
 }

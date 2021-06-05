@@ -2,7 +2,7 @@ module shard.utils.table;
 
 import shard.hash : Hash, is_hash;
 import shard.math : ilog2, is_power_of_two;
-import shard.memory.allocators.api : IAllocator;
+import shard.memory.allocators.api : Allocator;
 import std.algorithm : max, move, swap;
 import std.traits : hasElaborateDestructor, ReturnType;
 
@@ -32,19 +32,20 @@ struct HashTable(Value, alias value_hasher = Hash!32.of!Value) {
 
     @disable this(this);
 
-    size_t size() nothrow {
+nothrow:
+    @safe size_t size() {
         return _table.num_entries;
     }
 
-    bool is_empty() nothrow {
+    @safe bool is_empty() {
         return _table.num_entries == 0;
     }
 
-    bool contains(hash_t key) nothrow {
+    @safe bool contains(hash_t key) {
         return get(key) !is null;
     }
 
-    void reset(ref IAllocator allocator) nothrow {
+    void reset(Allocator allocator) {
         static if (hasElaborateDestructor!Value) {
             foreach (i, ref value; _table.values) {
                 if (_table.has_value(i))
@@ -56,17 +57,28 @@ struct HashTable(Value, alias value_hasher = Hash!32.of!Value) {
         _table = Table();
     }
 
-    Value* insert()(hash_t key, auto ref Value value, ref IAllocator allocator) nothrow {
-        return _insert(&_table, key, value, allocator);
+    Value* insert()(hash_t key, auto ref Value value, Allocator allocator) {
+        return _insert(_table, key, value, allocator);
+    }
+
+    Value* insert()(auto ref Value value, Allocator allocator) {
+        return _insert(_table, value_hasher(value), value, allocator);
     }
 
     /// Returns: `true` if the key existed, `false` otherwise.
-    bool remove(hash_t key, ref IAllocator allocator) nothrow {
+    bool remove(hash_t key, Allocator allocator) {
         auto value = get(key);
         if (value is null)
             return false;
 
-        auto index = value - _table.values.ptr;
+        remove(value, allocator);
+        return true;
+    }
+
+    void remove(Value* value, Allocator allocator) {
+        assert(contains(value_hasher(*value)));
+
+        auto index = value - &_table.values[0];
         auto next = index + 1;
 
         _table.distances[index] = -1;
@@ -83,10 +95,9 @@ struct HashTable(Value, alias value_hasher = Hash!32.of!Value) {
         }
 
         _table.num_entries--;
-        return true;
     }
 
-    Value* get(hash_t key) nothrow {
+    @safe Value* get(hash_t key) {
         auto distance = 0;
         auto index = _table.index_of(key);
 
@@ -98,7 +109,7 @@ struct HashTable(Value, alias value_hasher = Hash!32.of!Value) {
         return null;
     }
 
-    Value* get_or_insert()(hash_t key, auto ref Value value, ref IAllocator allocator) nothrow {
+    Value* get_or_insert()(hash_t key, auto ref Value value, Allocator allocator) {
         byte distance = 0;
         auto index = _table.index_of(key);
 
@@ -107,10 +118,10 @@ struct HashTable(Value, alias value_hasher = Hash!32.of!Value) {
                 return &_table.values[index];
         }
 
-        return _insert_new_value(&_table, key, value, distance, index, allocator);
+        return _insert_new_value(_table, key, value, distance, index, allocator);
     }
 
-private:
+private @safe nothrow:
     enum smallest_size = 8;
 
     struct Table {
@@ -134,19 +145,20 @@ private:
 
         @disable this(this);
 
+    nothrow:
         /// Creates a new table with `capacity + ilog2(capacity)` slots. The
         /// extra slots enable search loops to avoid bounds checking by
         /// nature of `index_of`, which provides an index only to `capacity`.
-        static bool create(size_t capacity, ref IAllocator allocator, out Table table) nothrow {
+        static bool create(size_t capacity, Allocator allocator, out Table table) {
             const max_distance = ilog2(capacity);
             const real_capacity = (capacity + max_distance);
             const max_entries = cast(size_t)(capacity * max_load_factor);
 
-            auto values = allocator.make_raw_array!Value(real_capacity);
+            auto values = allocator.make_array!Value(real_capacity);
             if (!values)
                 return false;
 
-            auto distances = allocator.make_raw_array!byte(real_capacity);
+            auto distances = allocator.make_array!byte(real_capacity);
             if (!distances)
                 return false;
             distances[] = -1;
@@ -161,13 +173,13 @@ private:
             return true;
         }
 
-        static void dispose(ref Table table, ref IAllocator allocator) nothrow {
+        static void dispose(ref Table table, Allocator allocator) {
             allocator.dispose(table.values);
             allocator.dispose(table.distances);
             table = Table();
         }
 
-        size_t index_of(hash_t hash) nothrow {
+        @safe size_t index_of(hash_t hash) {
             // 2 ^ 64 / golden_ratio, rounded up to nearest odd
             enum size_t multiple = 114_00_714_819_323_198_485;
 
@@ -175,16 +187,16 @@ private:
             return (hash.int_value * multiple) & (created_capacity - 1);
         }
 
-        pragma(inline, true) bool has_value(size_t index) nothrow {
+        pragma(inline, true) bool has_value(size_t index) {
             return distances[index] >= 0;
         }
 
-        pragma(inline, true) bool is_empty(size_t index) nothrow {
+        pragma(inline, true) bool is_empty(size_t index) {
             return distances[index] == -1;
         }
     }
 
-    static Value* _insert(Table* table, hash_t key, ref Value value, ref IAllocator allocator) nothrow {
+    static Value* _insert(ref Table table, hash_t key, ref Value value, Allocator allocator) nothrow {
         if (table.num_entries == table.max_entries && !_grow(table, allocator)) {
             return null;
         }
@@ -206,8 +218,8 @@ private:
         return _insert_new_value(table, key, value, distance, insert_point, allocator);
     }
 
-    static Value* _insert_new_value(Table* table, hash_t key, ref Value value,
-            byte distance, size_t insert_point, ref IAllocator allocator) nothrow {
+    static Value* _insert_new_value(ref Table table, hash_t key, ref Value value,
+            byte distance, size_t insert_point, Allocator allocator) {
         if (distance > table.max_distance) {
             if (_grow(table, allocator))
                 return _insert(table, key, value, allocator);
@@ -246,25 +258,25 @@ private:
         return &table.values[insert_point];
     }
 
-    static bool _grow(Table* table, ref IAllocator allocator) nothrow {
+    static bool _grow(ref Table table, Allocator allocator) {
         return _rehash(table, max(smallest_size, table.created_capacity * 2), allocator);
     }
 
-    static bool _rehash(Table* table, size_t capacity, ref IAllocator allocator) nothrow {
+    static bool _rehash(ref Table table, size_t capacity, Allocator allocator) {
         Table new_table;
         if (!Table.create(capacity, allocator, new_table))
             return false;
 
         foreach (i, distance; table.distances) {
             if (distance >= 0) {
-                _insert(&new_table, value_hasher(table.values[i]), table.values[i], allocator);
+                _insert(new_table, value_hasher(table.values[i]), table.values[i], allocator);
 
                 static if (hasElaborateDestructor!Value)
                     destroy(table.values[i]);
             }
         }
 
-        swap(*table, new_table);
+        swap(table, new_table);
 
         if (new_table.values)
             Table.dispose(new_table, allocator);
@@ -278,13 +290,13 @@ private:
 @("HashTable: colliding inserts") unittest {
     import shard.memory.allocators.system : SystemAllocator;
 
-    SystemAllocator mem;
+    scope mem = new SystemAllocator();
     HashTable!int table;
 
-    table.insert(Hash!32(3), 100, mem.allocator_api);
-    table.insert(Hash!32(11), 200, mem.allocator_api);
-    table.insert(Hash!32(19), 300, mem.allocator_api);
-    table.insert(Hash!32(27), 400, mem.allocator_api);
+    table.insert(Hash!32(3), 100, mem);
+    table.insert(Hash!32(11), 200, mem);
+    table.insert(Hash!32(19), 300, mem);
+    table.insert(Hash!32(27), 400, mem);
 
     // Colliding slots are correctly inserted past `table.created_capacity`
     assert(table._table.created_capacity == 8);
@@ -302,5 +314,5 @@ private:
     assert(table._table.values[10] == 400);
     assert(table._table.distances[10] == 3);
 
-    table.reset(mem.allocator_api());
+    table.reset(mem);
 }

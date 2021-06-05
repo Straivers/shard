@@ -1,14 +1,14 @@
 module shard.utils.array;
 
-import shard.memory.allocators.api : IAllocator;
+import shard.memory.allocators.api : Allocator;
 import std.algorithm : move;
 
 struct Array(T) {
     enum default_initial_size = 8;
 
 nothrow public:
-    this(ref IAllocator allocator, size_t initial_size = default_initial_size) {
-        _allocator = &allocator;
+    this(Allocator allocator, size_t initial_size = default_initial_size) {
+        _allocator = allocator;
         _impl = UnmanagedArray!T(allocator, initial_size);
     }
 
@@ -16,7 +16,7 @@ nothrow public:
 
     ~this() {
         if (_allocator)
-            _impl.free(*_allocator);
+            _impl.free(_allocator);
     }
 
     void unwrap(T)(out UnmanagedArray!T dest) {
@@ -30,13 +30,13 @@ nothrow public:
 
     void clear() { _impl.clear(); }
 
-    void reserve(size_t min_size) { _impl.reserve(*_allocator, min_size); }
+    void reserve(size_t min_size) { _impl.reserve(_allocator, min_size); }
 
-    void reserve_extra(size_t extra) { _impl.reserve_extra(*_allocator, extra); }
+    void reserve_extra(size_t extra) { _impl.reserve_extra(_allocator, extra); }
 
-    size_t push_back()(auto ref T value) { return _impl.push_back(*_allocator, value); }
+    size_t push_back()(auto ref T value) { return _impl.push_back(_allocator, value); }
 
-    size_t push_back(T[] values...) { return _impl.push_back(*_allocator, values); }
+    size_t push_back(T[] values...) { return _impl.push_back(_allocator, values); }
 
     T pop_back() { return _impl.pop_back(); }
 
@@ -45,7 +45,7 @@ nothrow public:
     inout(T[]) opIndex() inout { return _impl.opIndex(); }
 
 private:
-    IAllocator* _allocator;
+    Allocator _allocator;
     UnmanagedArray!T _impl;
 
     static assert(Array!T.sizeof == 24);
@@ -54,8 +54,8 @@ private:
 unittest {
     import shard.memory.allocators.system : SystemAllocator;
 
-    SystemAllocator mem;
-    auto arr = Array!int(mem.allocator_api());
+    scope mem = new SystemAllocator();
+    auto arr = Array!int(mem);
 
     foreach (i; 0 .. 512)
         arr.push_back(i);
@@ -78,8 +78,8 @@ unittest {
         @disable this(this);
     }
 
-    SystemAllocator mem;
-    auto arr = Array!Foo(mem.allocator_api());
+    scope mem = new SystemAllocator();
+    auto arr = Array!Foo(mem);
 
     foreach (i; 0 .. 512) {
         auto foo = Foo(i);
@@ -100,7 +100,7 @@ struct UnmanagedArray(T) {
     enum default_initial_size = 8;
 
 nothrow public:
-    this(ref IAllocator allocator, size_t initial_size = default_initial_size) {
+    this(Allocator allocator, size_t initial_size = default_initial_size) {
         _resize(allocator, initial_size);
     }
 
@@ -108,10 +108,10 @@ nothrow public:
 
     ~this() {
         assert(_p is null,
-            "Unmanaged array was not freed before destruction. call free(IAllocator) before destroying.");
+            "Unmanaged array was not freed before destruction. call free(Allocator) before destroying.");
     }
 
-    void free(ref IAllocator allocator) {
+    void free(Allocator allocator) {
         allocator.dispose(_p[0 .. _capacity]);
         _p = null;
     }
@@ -128,18 +128,18 @@ nothrow public:
         _length = 0;
     }
 
-    void reserve(ref IAllocator allocator, size_t min_size) {
+    void reserve(Allocator allocator, size_t min_size) {
         if (_capacity < min_size) {
             _resize(allocator, min_size);
         }
     }
 
-    void reserve_extra(ref IAllocator allocator, size_t extra) {
+    void reserve_extra(Allocator allocator, size_t extra) {
         while (_capacity < _length + extra)
             _grow(allocator);
     }
 
-    size_t push_back()(ref IAllocator allocator, auto ref T value) {
+    size_t push_back()(Allocator allocator, auto ref T value) {
         if (_length == _capacity)
             _grow(allocator);
 
@@ -149,7 +149,7 @@ nothrow public:
         return index;
     }
 
-    size_t push_back(ref IAllocator allocator, T[] values...) {
+    size_t push_back(Allocator allocator, T[] values...) {
         while (_length + values.length > _capacity)
             _grow(allocator);
 
@@ -182,7 +182,7 @@ nothrow public:
     }
 
 private:
-    void _grow(ref IAllocator allocator) {
+    void _grow(Allocator allocator) {
         // If array was constructed with initial_size == 0.
         if (_capacity == 0) {
             assert(default_initial_size < _capacity.max);
@@ -195,7 +195,7 @@ private:
             _resize(allocator, _capacity * 2);
     }
 
-    void _resize(ref IAllocator allocator, size_t size) {
+    void _resize(Allocator allocator, size_t size) {
         assert(size < uint.max, "Array max length = uint.max");
 
         auto arr = _p[0 .. _capacity];

@@ -1,7 +1,7 @@
 module shard.utils.map;
 
 import shard.hash : Hash;
-import shard.memory.allocators.api : IAllocator;
+import shard.memory.allocators.api : Allocator;
 import shard.utils.table;
 import std.algorithm : move;
 import std.traits : ReturnType;
@@ -36,20 +36,20 @@ struct HashMap(Key, Value, alias key_hasher = Hash!32.of!Key) {
         return _impl.contains(key_hasher(key));
     }
 
-    void reset(ref IAllocator allocator) nothrow {
+    void reset(Allocator allocator) nothrow {
         _impl.reset(allocator);
     }
 
-    Value* insert(Key key, ref Value value, ref IAllocator allocator) nothrow {
+    Value* insert(Key key, ref Value value, Allocator allocator) nothrow {
         auto pair = Pair(key, move(value));
         return &_impl.insert(key_hasher(key), pair, allocator).value;
     }
 
-    Value* insert(Key key, Value value, ref IAllocator allocator) nothrow {
+    Value* insert(Key key, Value value, Allocator allocator) nothrow {
         return &_impl.insert(key_hasher(key), Pair(key, value), allocator).value;
     }
 
-    bool remove(Key key, ref IAllocator allocator) nothrow {
+    bool remove(Key key, Allocator allocator) nothrow {
         return _impl.remove(key_hasher(key), allocator);
     }
 
@@ -57,7 +57,7 @@ struct HashMap(Key, Value, alias key_hasher = Hash!32.of!Key) {
         return &_impl.get(key_hasher(key)).value;
     }
 
-    Value* get_or_insert()(Key key, auto ref Value value, ref IAllocator allocator) nothrow {
+    Value* get_or_insert()(Key key, auto ref Value value, Allocator allocator) nothrow {
         return &_impl.get_or_insert(key_hasher(key), Pair(key, move(value)), allocator).value;
     }
 
@@ -79,7 +79,7 @@ private:
     import std.random : uniform;
     import std.range : iota, lockstep;
 
-    SystemAllocator mem;
+    scope mem = new SystemAllocator();
     HashMap!(Hash!32, ulong) map;
 
     ulong[Hash!32] hashes;
@@ -87,7 +87,7 @@ private:
         hashes[Hash!32(uniform(0, uint.max))] = hashes.length;
 
     foreach (key; hashes.byKey)
-        map.insert(key, hashes[key], mem.allocator_api());
+        map.insert(key, hashes[key], mem);
 
     foreach (key; hashes.byKey) {
         assert(map.contains(key));
@@ -98,21 +98,21 @@ private:
 @("HashMap: get_or_insert()") unittest {
     import shard.memory.allocators.system : SystemAllocator;
 
-    SystemAllocator mem;
+    scope mem = new SystemAllocator();
     HashMap!(ulong, ulong) map;
 
-    map.insert(20, 100, mem.allocator_api());
+    map.insert(20, 100, mem);
     assert(map.contains(20));
 
     assert(!map.contains(10));
-    auto value = map.get_or_insert(10, 200, mem.allocator_api());
+    auto value = map.get_or_insert(10, 200, mem);
     assert(map.contains(10));
 
     assert(*value == 200);
     *value = 500;
 
-    assert(*map.get_or_insert(10, 10, mem.allocator_api()) == 500);
+    assert(*map.get_or_insert(10, 10, mem) == 500);
     assert(*map.get(10) == 500);
 
-    map.reset(mem.allocator_api());
+    map.reset(mem);
 }
