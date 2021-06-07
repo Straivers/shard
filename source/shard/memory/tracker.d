@@ -1,262 +1,228 @@
-module shard.memory.tracker;
+module shard.memory.tracker2;
 
 import shard.hash : Hash32;
-import shard.memory.allocators.api : IAllocator;
-import shard.memory.allocators.system : SystemAllocator;
+import shard.memory.allocators.api;
+import shard.memory.allocators.system;
 import shard.pad : pad_bytes;
-import shard.traits : object_size, PtrType;
-import shard.utils.array : UnmanagedArray;
 import shard.utils.handle : HandlePool;
 import shard.utils.table : HashTable;
 
-import std.algorithm : move, min;
 import std.bitmanip : bitfields;
-import std.traits : fullyQualifiedName;
-/*
-alias ScopeId = HandlePool.Handle;
+import std.exception : assumeWontThrow;
+import std.typecons : scoped;
 
-struct MemoryTracker {
-    enum default_max_tracking_scopes = 256;
+alias ScopeId = HandlePool!(scope_handle_name, TrackedScope).Handle;
 
-public:
-    this(IAllocator root, size_t max_scopes = default_max_tracking_scopes) {
-        _root = move(root);
-        _scopes = _root.make_array!Scope(max_scopes);
-        _handles = _root.make_array!(HandlePool.Handle)(max_scopes);
-        _scope_ids = HandlePool(_handles);
+final class MemoryTracker {
+    enum default_max_scopes = 32;
+
+@safe nothrow:
+    @trusted this(size_t max_scopes = default_max_scopes) {
+        _root = scoped!SystemAllocator();
+        _scopes = typeof(_scopes)(max_scopes, _root);
+
+        _tracker_scope = () {
+            auto id = _scopes.allocate();
+            _scopes.value_of(id).name = "MemoryTracker";
+            return MemoryScope(id, this);
+        } ();
     }
 
     ~this() {
-        _name_storage.free(_root);
-        _root.dispose(_scopes);
-        _root.dispose(_handles);
-        _tracked_types.reset(_root);
+        destroy(_scopes);
+        destroy(_types);
     }
 
-    void register_allocation(T)(ScopeId scope_id, PtrType!T p) nothrow {
-        assert(_scope_ids.is_valid(scope_id));
+    @trusted MemoryScope acquire_scope(string name) {
+        auto id = _scopes.allocate();
 
-        const alloc_id = Hash32.of(p);
-        assert(!_allocations.contains(alloc_id));
+        auto clone = _tracker_scope.make_array!char(name.length);
+        clone[] = name;
 
-        auto type = _get_type_id!T();
-        auto tracking_scope = &_scopes[_scope_ids.index_of(scope_id)];
-
-        type.num_allocations++;
-        tracking_scope.num_allocations++;
-        _allocations.insert(alloc_id, Allocation(p, type.id), _root);
+        _scopes.value_of(id).name = clone;
+        return MemoryScope(id, this);
     }
 
-    void register_deallocation(T)(ScopeId scope_id, PtrType!T p) nothrow {
-        assert(_scope_ids.is_valid(scope_id));
+private @safe nothrow:
+    @trusted MemoryScope _acquire_scope(ScopeId parent, string name) {
+        auto id = _scopes.allocate();
 
-        if (!_allocations.remove(Hash32.of(p), _root))
-            assert(0, "Double free detected!");
+        auto clone = _tracker_scope.make_array!char(name.length);
+        clone[] = name;
 
-        _get_type_id!T().num_allocations--;
-        _scopes[_scope_ids.index_of(scope_id)].num_allocations--;
+        _scopes.value_of(id).name = clone;
+        return MemoryScope(id, this);
     }
 
-    void register_array_allocation(T)(ScopeId scope_id, T[] a) nothrow {
-        assert(_scope_ids.is_valid(scope_id));
-        const type = _get_type_id!T();
-        // auto tracked = _scopes.get(scope_id).allocations.insert(a.ptr, Allocation(type_id));
-        // tracked.is_array = true;
-        // tracked.array_length = cast(uint) a.length;
+    @trusted void _release_scope(ScopeId id) {
+        assert(_scopes.is_valid(id));
+        _tracker_scope.dispose(_scopes.value_of(id).name);
+        _scopes.deallocate(id);
     }
 
-    void register_array_deallocation(T)(ScopeId scope_id, T[] a) nothrow {
-        assert(_scope_ids.is_valid(scope_id));
-        // auto tracked = _scopes.get(scope_id).allocations.get_and_remove(a.ptr);
-        // _tracked_types.get(tracked.type_name).num_allocated -= a.length;
+    void[] _allocate(ScopeId scope_id, size_t size, string name) {
+        assert(_scopes.is_valid(scope_id));
+
+        auto root = (() @trusted => _root.Scoped_payload())();
+        const type_id = Hash32.of(&name[0]);
+
+        if (auto type = _types.get(type_id))
+            type.num_allocated++;
+        else
+            _types.insert(type_id, TrackedType(name, cast(uint) size, 0), root);
+
+        auto result = root.allocate(size, name);
+
+        if (result)
+            _scopes.value_of(scope_id).allocations.insert(TrackedAllocation(&result[0], type_id, scope_id), root);
+
+        return result;
     }
 
-    void register_array_reallocation(T)(ScopeId scope_id,
-            void* old_location, size_t old_length, T[] a) nothrow {
-        assert(_scope_ids.is_valid(scope_id));
-        // auto tracked = _scopes.get(scope_id).allocations.get_and_remove(old_location);
-        // _tracked_types.get(tracked.type_name).num_allocated += a.length - old_length;
-        // tracked.array_length = a.length;
-        // _scopes.get(scope_id).allocations.insert(a.ptr, tracked);
-    }
+    void _deallocate(ScopeId scope_id, void[] memory) {
+        assert(_scopes.is_valid(scope_id));
 
-private:
-    static struct Scope {
-        static assert(typeof(this).sizeof == 20);
+        auto root = (() @trusted => _root.Scoped_payload())();
+        auto allocations = &_scopes.value_of(scope_id).allocations;
 
-        bool is_in_use;
-        mixin pad_bytes!3;
-
-        uint name_offset;
-        uint name_length;
-        
-        uint num_allocations;
-        
-        ScopeId parent_scope;
-    }
-
-    static struct Type {
-        static assert(typeof(this).sizeof == 20);
-
-        Hash32 id;
-
-        uint name_offset;
-        uint name_length;
-
-        ushort size;
-        mixin pad_bytes!2;
-
-        uint num_allocations;
-
-        static Hash32 hash(ref Type tt) nothrow {
-            return tt.id;
-        }
-    }
-
-    static struct Allocation {
-        static assert(typeof(this).sizeof == 16);
-
-        void* pointer;
-        Hash32 tracking_type;
-
-        // dfmt off
-        mixin(bitfields!(
-            bool, "is_array", 1,
-            uint, "array_length", 31,
-        ));
-        // dfmt on
-
-        static Hash32 hash(ref Allocation ta) nothrow {
-            return Hash32.of(ta.pointer);
-        }
-    }
-
-    Type* _get_type_id(T)() nothrow {
-        enum t_name = fullyQualifiedName!T;
-        const type_id = Hash32.of(t_name.ptr);
-
-        if (auto tt = _tracked_types.get(type_id)) {
-            return tt;
+        if (auto alloc = allocations.get(Hash32.of(&memory[0]))) {
+            _types.get(alloc.type_id).num_allocated--;
+            allocations.remove(alloc, root);
+            root.deallocate(memory);
         }
         else {
-            const name_length = cast(typeof(Type.name_length)) t_name.length;
-            const name_offset = _name_storage.push_back(_root, cast(char[]) t_name[0 .. name_length]);
-            assert(name_offset < Type.name_offset.max, "Name storage too large, max 2 ^ 32 characters!");
-
-            auto type = Type(type_id, cast(typeof(Type.name_offset)) name_offset, name_length, object_size!T);
-            return _tracked_types.insert(type_id, type, _root);
+            assert(0, "Double free detected!");
         }
     }
 
-    IAllocator _root;
+    void[] _reallocate_array(ScopeId scope_id, void[] memory, size_t size, length_t length, string name) {
+        assert(_scopes.is_valid(scope_id));
+        assert(memory.length % size == 0);
 
-    UnmanagedArray!(char) _name_storage;
+        auto root = (() @trusted => _root.Scoped_payload())();
+        auto allocations = &_scopes.value_of(scope_id).allocations;
 
-    Scope[] _scopes;
-    HandlePool _scope_ids;
-    HandlePool.Handle[] _handles;
+        const type_id = Hash32.of(&name[0]);
 
-    HashTable!(Type, Type.hash) _tracked_types;
-    HashTable!(Allocation, Allocation.hash) _allocations;
+        if (auto new_memory = root.reallocate_array(memory, size, length, name)) {
+            if (memory) {
+                // We don't know where `memory`points to anymore, so don't index into it!
+                auto old_pointer = &memory[0];
+                auto old_allocation = allocations.get(Hash32.of(old_pointer));
+                assert(old_allocation.scope_id == scope_id);
+                assert(old_allocation.type_id == type_id);
+                assert(old_allocation.is_array);
+                assert(old_allocation.array_length * size == memory.length);
+
+                if (old_pointer == &new_memory[0]) {
+                    old_allocation.array_length = cast(uint) length;
+                    return new_memory;
+                }
+                else {
+                    allocations.remove(old_allocation, root);
+                }
+            }
+
+            auto allocation = allocations.insert(TrackedAllocation(&memory[0], type_id, scope_id), root);
+            allocation.is_array = true;
+            allocation.array_length = cast(uint) length;
+
+            return new_memory;
+        }
+        else {
+            return [];
+        }
+    }
+
+    typeof(scoped!SystemAllocator()) _root;
+
+    MemoryScope _tracker_scope;
+    HandlePool!(scope_handle_name, TrackedScope) _scopes;
+
+    HashTable!(TrackedType, TrackedType.hash) _types;
 }
 
-struct TrackedAllocator {
-    this(IAllocator* base, MemoryTracker* tracker) {
-        _base = base;
-        _tracker = tracker;
+struct MemoryScope {
+    final class Impl : Allocator {
+        ScopeId scope_id;
+        MemoryTracker tracker;
+
+    @safe nothrow:
+        this(ScopeId id, MemoryTracker tracker) {
+            scope_id = id;
+            this.tracker = tracker;
+        }
+
+        ~this() {
+            tracker._release_scope(scope_id);
+        }
+
+        void[] allocate(size_t size, string name = no_name) {
+            return tracker._allocate(scope_id, size, name);
+        }
+
+        void deallocate(void[] memory) {
+            tracker._deallocate(scope_id, memory);
+        }
+
+        void[] reallocate_array(void[] memory, size_t element_size, length_t new_length, string name = no_name) {
+            return tracker._reallocate_array(scope_id, memory, element_size, new_length, name);
+        }
+    }
+
+@safe nothrow:
+    @trusted this(ScopeId id, MemoryTracker tracker) {
+        impl = scoped!Impl(id, tracker);
     }
 
     @disable this(this);
-
-    ~this() {
-
+    
+    @trusted MemoryScope acquire_scope(string name) {
+        return impl.tracker._acquire_scope(scope_id, name);
     }
 
-    IAllocator allocator_api() nothrow return {
-        // dfmt off
-        return IAllocator(
-            &this,
-            &allocator_api_alignment,
-            null,
-            &allocator_api_allocate,
-            &allocator_api_deallocate,
-            &allocator_api_reallocate
-        );
-        // dfmt on
-    }
-
-    PtrType!T make(T, Args...)(auto ref Args args) nothrow {
-        auto p = _base.make!T(args);
-        if (p)
-            _tracker.register_allocation(_tracker_scope, memory);
-        return p;
-    }
-
-    T[] make_array(T)(size_t length) nothrow {
-        auto a = _base.make_array!T(length);
-        if (a)
-            _tracker.register_array_allocation!T(_tracker_scope, a);
-        return a;
-    }
-
-    T[] make_raw_array(T)(size_t length) nothrow {
-        auto a = _base.make_raw_array!T(length);
-        if (a)
-            _tracker.register_array_allocation(_tracker_scope, a);
-        return a;
-    }
-
-    void dispose(T)(auto ref T* p) nothrow {
-        _base.dispose(p);
-        _tracker.register_deallocation!T(_tracker_scope, p);
-    }
-
-    void dispose(T)(auto ref T p) nothrow if (is(T == class) || is(T == interface)) {
-        _base.dispose(p);
-        _tracker.register_deallocation(_tracker_scope, p);
-    }
-
-    void dispose(T)(auto ref T[] p) nothrow {
-        _base.dispose(p);
-        _tracker.register_array_deallocation(_tracker_scope, p);
-    }
-
-    bool resize_array(T)(ref T[] array, size_t length) nothrow {
-        assert(0);
-    }
-
-    TrackedAllocator* create_child() {
-        assert(0);
-    }
-
-    void destroy_child(TrackedAllocator* child, size_t max_leaked_bytes = 0) {
-        assert(0);
-    }
+    typeof(scoped!Impl(ScopeId(), null)) impl;
+    alias impl this;
+}
 
 private:
-    static size_t allocator_api_alignment(const void* self) nothrow {
-        return (cast(const typeof(this)*) self)._base.alignment();
+
+enum scope_handle_name = "MemoryTracker::TrackedScope";
+
+struct TrackedScope {
+    const(char)[] name;
+    ScopeId parent;
+
+    HashTable!(TrackedAllocation, TrackedAllocation.hash) allocations;
+}
+
+struct TrackedType {
+    string name;
+    uint size;
+    uint num_allocated;
+
+    static assert(typeof(this).sizeof == 24);
+
+    static @safe hash(ref TrackedType tt) nothrow {
+        return Hash32.of(&tt.name[0]);
     }
+}
 
-    static void[] allocator_api_allocate(void* self, size_t size, string name) nothrow {
-        return (cast(typeof(this)*) self).make_array!void(size);
-    }
+struct TrackedAllocation {
+    void* pointer;
+    Hash32 type_id;
+    ScopeId scope_id;
 
-    static void allocator_api_deallocate(void* self, void[] block, string name) nothrow {
-        return (cast(typeof(this)*) self).dispose(block);
-    }
+    mixin(bitfields!(
+        uint, "array_length", 31,
+        bool, "is_array", 1,
+    ));
 
-    static bool allocator_api_reallocate(void* self, ref void[] block, size_t size, size_t count, string name) nothrow {
-        return (cast(typeof(this)*) self).resize_array(block, size * count);
-    }
-
-    IAllocator* _base;
-
-    ScopeId _tracker_scope;
     mixin pad_bytes!4;
 
-    MemoryTracker* _tracker;
-    
     static assert(typeof(this).sizeof == 24);
+
+    static @safe hash(ref TrackedAllocation a) nothrow {
+        return Hash32.of(a.pointer);
+    }
 }
-*/
