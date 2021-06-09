@@ -21,16 +21,16 @@ struct HashSet(Value, alias value_hasher = Hash!32.of!Value) {
         return _impl.contains(value_hasher(entry));
     }
 
-    void reset(Allocator allocator) nothrow {
+    void reset(ref Allocator allocator) nothrow {
         _impl.reset(allocator);
     }
 
-    Value* insert(Value value, Allocator allocator) nothrow {
+    Value* insert(Value value, ref Allocator allocator) nothrow {
         auto entry = Entry(value_hasher(value), move(value));
         return &_impl.insert(entry.key, entry, allocator).value;
     }
 
-    bool remove(Value value, Allocator allocator) nothrow {
+    bool remove(Value value, ref Allocator allocator) nothrow {
         return _impl.remove(value_hasher(value), allocator);
     }
 
@@ -51,7 +51,7 @@ private:
     import shard.memory.allocators.system : SystemAllocator;
     import std.random : uniform;
 
-    scope mem = new SystemAllocator();
+    auto mem = SystemAllocator().allocator();
     HashSet!(Hash!32) set;
 
     alias Unit = void[0];

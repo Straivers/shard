@@ -7,18 +7,56 @@ import std.traits : fullyQualifiedName, hasElaborateDestructor, hasMember;
 alias length_t = size_t;
 
 /**
-Yes, we are using an interface. The key reasoning being that we expect allocator
-use to be fairly consistent, with only a few in existence at any time.
-
-If you only have a few allocators and allocate memory in large chunks outside of
-tight loops, the performance impact should be minimal. In return, we gain
-significant flexibility in how we can choose to implement new allocators and
-insert them with no change to the rest of the codebase.
 */
-interface Allocator {
-    enum no_name = "no_name";
+struct Allocator {
+    /*
+    Why use a struct with function pointers instead of an interface?
 
-@safe nothrow:
+    1. Because class lifetimes are harder to deal with. I spent several days
+       trying to get it to cooperate with memory tracking, but kept running into
+       lifetime isues.
+    2. Because you can store structs on the stack, and move them between
+       locations in memory.
+    3. You don't really lose anything except for a few bytes that would have
+       been saved by using a vtable.
+    */
+
+    mixin template api(string alloc_fn, string dealloc_fn, string realloc_fn) {
+        Allocator allocator() return {
+            // dfmt off
+            return Allocator(
+                &this,
+                &allocator_api_allocate,
+                &allocator_api_deallocate,
+                &allocator_api_reallocate
+            );
+            // dfmt on
+        }
+
+        @trusted static void[] allocator_api_allocate(void* self, size_t size, string name) {
+            mixin("return (cast(typeof(this)*) self)." ~ alloc_fn ~ "(size, name);");
+        }
+
+        @trusted static void allocator_api_deallocate(void* self, void[] memory) {
+            mixin("return (cast(typeof(this)*) self)." ~ dealloc_fn ~ "(memory);");
+        }
+
+        @trusted static void[] allocator_api_reallocate(void* self, void[] memory, size_t size, size_t length, string name) {
+            mixin("return (cast(typeof(this)*) self)." ~ realloc_fn ~ "(memory, size, length, name);");
+        }
+    }
+
+nothrow:
+
+    static immutable no_name = "no_name";
+
+    alias Self = void*;
+
+    alias AllocateFn = void[] function(Self, size_t, string name = no_name) @safe;
+    alias DeallocateFn = void function(Self, void[]) @safe;
+    alias ReallocateArrayFn = void[] function(Self, void[], size_t, length_t, string name = no_name) @safe;
+
+    Self self;
 
     /**
     Allocates `size` bytes of memory.
@@ -28,7 +66,7 @@ interface Allocator {
         name            = An identifier used to enable tracking of the
                           allocation.
     */
-    void[] allocate(size_t size, string name = no_name);
+    AllocateFn allocate_fn;
 
     /**
     Deallocates block of memory.
@@ -37,7 +75,7 @@ interface Allocator {
         memory          = The block of memory to deallocate.
         name            = The same identifier used 
     */
-    void deallocate(void[] memory);
+    DeallocateFn deallocate_fn;
 
     /**
     Resizes an array. It may allocate a new region of memory and copy the old
@@ -61,9 +99,21 @@ interface Allocator {
     
     Returns: The resized array, or `[]` if reallocation failed.
     */
-    void[] reallocate_array(void[] memory, size_t element_size, length_t new_length, string name = no_name);
+    ReallocateArrayFn reallocate_array_fn;
 
 public:
+
+    @safe void[] allocate(size_t size, string name = no_name) {
+        return allocate_fn(self, size, name);
+    }
+
+    @safe void deallocate(void[] memory) {
+        return deallocate_fn(self, memory);
+    }
+
+    @safe void[] reallocate_array(void[] memory, size_t size, length_t length, string name = no_name) {
+        return reallocate_array_fn(self, memory, size, length, name);
+    }
 
     /**
     Dynamically allocates memory from the allocator then constructs an object of

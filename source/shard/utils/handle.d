@@ -36,19 +36,9 @@ struct HandlePool(string name, Value = void) {
     else
         alias Slot = Handle;
 
-    this(size_t capacity, Allocator allocator) nothrow {
-        _allocator = allocator;
-        _init_slots(_allocator.make_array!Slot(capacity));
-    }
-
     this(Slot[] slots) nothrow {
         slots[] = Slot();
         _init_slots(slots);
-    }
-
-    ~this() nothrow {
-        if (_allocator)
-            _allocator.dispose(_slots);
     }
 
     /**
@@ -130,7 +120,6 @@ struct HandlePool(string name, Value = void) {
         }
 
         _increment_generation(_slots[0]);
-
     }
 
     @trusted ref Slot _slot(uint index) {
@@ -162,14 +151,13 @@ struct HandlePool(string name, Value = void) {
     }
 
     Slot* _slots;
-    Allocator _allocator;
 
     uint _num_slots;
     uint _value_mask;
     uint _freelist;
     uint _freelist_length;
 
-    static assert(typeof(this).sizeof == 32);
+    static assert(typeof(this).sizeof == 24);
 }
 
 @("HandlePool: bit manipulation") unittest {

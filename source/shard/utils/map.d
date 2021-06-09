@@ -36,20 +36,20 @@ struct HashMap(Key, Value, alias key_hasher = Hash!32.of!Key) {
         return _impl.contains(key_hasher(key));
     }
 
-    void reset(Allocator allocator) nothrow {
+    void reset(ref Allocator allocator) nothrow {
         _impl.reset(allocator);
     }
 
-    Value* insert(Key key, ref Value value, Allocator allocator) nothrow {
+    Value* insert(Key key, ref Value value, ref Allocator allocator) nothrow {
         auto pair = Pair(key, move(value));
         return &_impl.insert(key_hasher(key), pair, allocator).value;
     }
 
-    Value* insert(Key key, Value value, Allocator allocator) nothrow {
+    Value* insert(Key key, Value value, ref Allocator allocator) nothrow {
         return &_impl.insert(key_hasher(key), Pair(key, value), allocator).value;
     }
 
-    bool remove(Key key, Allocator allocator) nothrow {
+    bool remove(Key key, ref Allocator allocator) nothrow {
         return _impl.remove(key_hasher(key), allocator);
     }
 
@@ -57,7 +57,7 @@ struct HashMap(Key, Value, alias key_hasher = Hash!32.of!Key) {
         return &_impl.get(key_hasher(key)).value;
     }
 
-    Value* get_or_insert()(Key key, auto ref Value value, Allocator allocator) nothrow {
+    Value* get_or_insert()(Key key, auto ref Value value, ref Allocator allocator) nothrow {
         return &_impl.get_or_insert(key_hasher(key), Pair(key, move(value)), allocator).value;
     }
 
@@ -79,7 +79,7 @@ private:
     import std.random : uniform;
     import std.range : iota, lockstep;
 
-    scope mem = new SystemAllocator();
+    auto mem = SystemAllocator().allocator();
     HashMap!(Hash!32, ulong) map;
 
     ulong[Hash!32] hashes;
@@ -98,7 +98,7 @@ private:
 @("HashMap: get_or_insert()") unittest {
     import shard.memory.allocators.system : SystemAllocator;
 
-    scope mem = new SystemAllocator();
+    auto mem = SystemAllocator().allocator();
     HashMap!(ulong, ulong) map;
 
     map.insert(20, 100, mem);

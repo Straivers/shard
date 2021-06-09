@@ -45,7 +45,7 @@ nothrow:
         return get(key) !is null;
     }
 
-    void reset(Allocator allocator) {
+    void reset(ref Allocator allocator) {
         static if (hasElaborateDestructor!Value) {
             foreach (i, ref value; _table.values) {
                 if (_table.has_value(i))
@@ -57,16 +57,16 @@ nothrow:
         _table = Table();
     }
 
-    Value* insert()(hash_t key, auto ref Value value, Allocator allocator) {
+    Value* insert()(hash_t key, auto ref Value value, ref Allocator allocator) {
         return _insert(_table, key, value, allocator);
     }
 
-    Value* insert()(auto ref Value value, Allocator allocator) {
+    Value* insert()(auto ref Value value, ref Allocator allocator) {
         return _insert(_table, value_hasher(value), value, allocator);
     }
 
     /// Returns: `true` if the key existed, `false` otherwise.
-    bool remove(hash_t key, Allocator allocator) {
+    bool remove(hash_t key, ref Allocator allocator) {
         auto value = get(key);
         if (value is null)
             return false;
@@ -75,7 +75,7 @@ nothrow:
         return true;
     }
 
-    void remove(Value* value, Allocator allocator) {
+    void remove(Value* value, ref Allocator allocator) {
         assert(contains(value_hasher(*value)));
 
         auto index = value - &_table.values[0];
@@ -109,7 +109,7 @@ nothrow:
         return null;
     }
 
-    Value* get_or_insert()(hash_t key, auto ref Value value, Allocator allocator) {
+    Value* get_or_insert()(hash_t key, auto ref Value value, ref Allocator allocator) {
         byte distance = 0;
         auto index = _table.index_of(key);
 
@@ -149,7 +149,7 @@ private @safe nothrow:
         /// Creates a new table with `capacity + ilog2(capacity)` slots. The
         /// extra slots enable search loops to avoid bounds checking by
         /// nature of `index_of`, which provides an index only to `capacity`.
-        static bool create(size_t capacity, Allocator allocator, out Table table) {
+        static bool create(size_t capacity, ref Allocator allocator, out Table table) {
             const max_distance = ilog2(capacity);
             const real_capacity = (capacity + max_distance);
             const max_entries = cast(size_t)(capacity * max_load_factor);
@@ -173,7 +173,7 @@ private @safe nothrow:
             return true;
         }
 
-        static void dispose(ref Table table, Allocator allocator) {
+        static void dispose(ref Table table, ref Allocator allocator) {
             allocator.dispose(table.values);
             allocator.dispose(table.distances);
             table = Table();
@@ -196,7 +196,7 @@ private @safe nothrow:
         }
     }
 
-    static Value* _insert(ref Table table, hash_t key, ref Value value, Allocator allocator) nothrow {
+    static Value* _insert(ref Table table, hash_t key, ref Value value, ref Allocator allocator) nothrow {
         if (table.num_entries == table.max_entries && !_grow(table, allocator)) {
             return null;
         }
@@ -219,7 +219,7 @@ private @safe nothrow:
     }
 
     static Value* _insert_new_value(ref Table table, hash_t key, ref Value value,
-            byte distance, size_t insert_point, Allocator allocator) {
+            byte distance, size_t insert_point, ref Allocator allocator) {
         if (distance > table.max_distance) {
             if (_grow(table, allocator))
                 return _insert(table, key, value, allocator);
@@ -258,11 +258,11 @@ private @safe nothrow:
         return &table.values[insert_point];
     }
 
-    static bool _grow(ref Table table, Allocator allocator) {
+    static bool _grow(ref Table table, ref Allocator allocator) {
         return _rehash(table, max(smallest_size, table.created_capacity * 2), allocator);
     }
 
-    static bool _rehash(ref Table table, size_t capacity, Allocator allocator) {
+    static bool _rehash(ref Table table, size_t capacity, ref Allocator allocator) {
         Table new_table;
         if (!Table.create(capacity, allocator, new_table))
             return false;
@@ -290,7 +290,7 @@ private @safe nothrow:
 @("HashTable: colliding inserts") unittest {
     import shard.memory.allocators.system : SystemAllocator;
 
-    scope mem = new SystemAllocator();
+    auto mem = SystemAllocator().allocator();
     HashTable!int table;
 
     table.insert(Hash!32(3), 100, mem);

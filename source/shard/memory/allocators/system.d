@@ -6,10 +6,11 @@ import shard.memory.values: platform_alignment;
 
 import core.stdc.stdlib: malloc, free, realloc;
 
-class SystemAllocator : Allocator {
+struct SystemAllocator {
 @safe nothrow:
+    mixin Allocator.api!("allocate", "deallocate", "reallocate_array");
 
-    void[] allocate(size_t size, string name = no_name) {
+    void[] allocate(size_t size, string name = Allocator.no_name) {
         if (size == 0)
             return null;
 
@@ -21,7 +22,7 @@ class SystemAllocator : Allocator {
         () @trusted { free(block.ptr); } ();
     }
 
-    void[] reallocate_array(void[] memory, size_t element_size, length_t length, string name = no_name) {
+    void[] reallocate_array(void[] memory, size_t element_size, length_t length, string name = Allocator.no_name) {
         const size = element_size * length;
         if (memory && size == 0) {
             (() @trusted => free(memory.ptr))();
@@ -40,7 +41,7 @@ class SystemAllocator : Allocator {
 }
 
 @("SystemAllocator: interface compliance") unittest {
-    scope mem = new SystemAllocator;
+    SystemAllocator mem;
 
     void[] a;
     a = mem.reallocate_array(a, 1, 20);
@@ -60,16 +61,17 @@ class SystemAllocator : Allocator {
 }
 
 @("SystemAllocator: make_array(), resize_array(), dispose(array)") unittest {
-    scope mem = new SystemAllocator;
+    SystemAllocator mem;
+    auto allocator = mem.allocator();
 
-    auto a1 = mem.make_array!int(20);
+    auto a1 = allocator.make_array!int(20);
     assert(a1);
     assert(a1.length == 20);
 
-    assert(mem.resize_array(a1, 10));
+    assert(allocator.resize_array(a1, 10));
     assert(a1);
     assert(a1.length == 10);
 
-    mem.dispose(a1);
+    allocator.dispose(a1);
     assert(!a1);
 }
